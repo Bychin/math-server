@@ -3,11 +3,13 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	//"errors"
 	"fmt"
 	"net"
-	"reflect"
+	//"reflect"
 	"strings"
 	"sync"
+	"time"
 )
 
 type postQuery struct {
@@ -37,16 +39,52 @@ func filterNewLines(s string) string {
 }
 
 // Closes conn and deletes func from funcMap if exists
-func closeConn(conn net.Conn, funcMap map[string]*inOutChans, chans *inOutChans) {
+func closeConn(conn net.Conn, funcMap map[string]*inOutChans, chans map[string]*inOutChans) {
 	name := conn.RemoteAddr().String()
-	for key, value := range funcMap {
-		if value.in == chans.in {
+	for key := range chans {
+		if _, ok := funcMap[key]; ok {
 			delete(funcMap, key)
 		}
 	}
 
 	conn.Close()
 	fmt.Println(name, "disconnected")
+}
+
+/*
+for { // how to close? (with func remove from map)
+				data := <-dataChan // get values from chan
+
+				conn.Write([]byte("C" + data))
+				ans, err := scanner.ReadBytes('\n')
+				if err != nil { // Can be caused by closing READY connection
+					fmt.Println("Error: can't read answer content")
+					conn.Write([]byte("ECan't read answer content!\n\r"))
+					*chans.out <- "ECan't read answer content!\n\r"
+					break LOOP
+				}
+				*chans.out <- "D" + string(ans) // send ans to out chan
+			}
+*/
+
+// listens chans.in which is blong to conn
+func listenConn(pair *inOutChans, conn net.Conn, connReader *bufio.Reader) {
+LOOP:
+	for {
+		select {
+		case data := <-*pair.in:
+			conn.Write([]byte("C" + data)) // calcQuery format
+			ans, err := connReader.ReadBytes('\n')
+			if err != nil { // Can be caused by closing READY connection
+				fmt.Println("Error: can't read answer content")
+				conn.Write([]byte("ECan't read answer content!\n\r"))
+				*pair.out <- "ECan't read answer content!\n\r"
+				break LOOP
+			}
+			*pair.out <- string(ans) // send ans to out chan
+		case <-time.After(time.Millisecond):
+		}
+	}
 }
 
 func handleConnection(conn net.Conn, funcMap map[string]*inOutChans, mu, mu2 *sync.Mutex) {
@@ -57,21 +95,19 @@ func handleConnection(conn net.Conn, funcMap map[string]*inOutChans, mu, mu2 *sy
 	scanner := bufio.NewReader(conn)
 	//dataChan := make(chan string)
 	chans := make(map[string]*inOutChans) //&inOutChans{in: &dataChan, out: nil}
-	//defer closeConn(conn, funcMap, chans) !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	defer closeConn(conn, funcMap, chans) //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 LOOP:
 	for {
 		msgType, err := scanner.ReadByte()
 		if err != nil {
 			fmt.Println("Error: can't read message type")
 			conn.Write([]byte("ECan't read message type!\n\r"))
-			//fmt.Println(name, "disconnected")
 			break
 		}
 		buf, err := scanner.ReadBytes('\n') // because of this, please always add '\n' at the end of your message
 		if err != nil {
 			fmt.Println("Error: can't read message content")
 			conn.Write([]byte("ECan't read message content!\n\r"))
-			//fmt.Println(name, "disconnected")
 			break
 		}
 		text := filterNewLines(string(buf))
@@ -103,8 +139,9 @@ LOOP:
 			sendChan := funcMap[c.Function].in
 			mu.Unlock()
 
-			*sendChan <- string(c.Data) + "\n" // send params to func holder
-			answer := <-dataChan               // get answer
+			//*sendChan <- string(c.Function) + "\n" // send func name to func holder (so conn holder can chose which func to execute)
+			*sendChan <- string(buf) + "\n" // send params to func holder
+			answer := <-dataChan            // get answer
 			mu2.Unlock()
 
 			fmt.Println("Operation was done, closing conn")
@@ -138,23 +175,13 @@ LOOP:
 		case 'R': // READY - conn is now ready to execute others CALC requests
 			fmt.Println(name, "- READY request")
 
-			cases := make([]reflect.SelectCase, len(chans))
-			i := 0
-			for key, value := range chans {
-				cases[i] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(value.in)}
-				i++
+			// for pair in chans listen pair.in
+			for _, value := range chans {
+				go listenConn(value, conn, scanner)
+				// how to close conn if break?
 			}
-			for { // TODO
-				chosen, value, ok := reflect.Select(cases)
-				if !ok {
-					// The chosen channel has been closed, so zero out the channel to disable the case
-					cases[chosen].Chan = reflect.ValueOf(nil)
-					continue
-				}
 
-				fmt.Printf("Read from channel %#v and received %s\n", chans[chosen], value.String())
-			}
-			for { // how to close? (with func remove from map)
+			/*for { // how to close? (with func remove from map)
 				data := <-dataChan // get values from chan
 
 				conn.Write([]byte("C" + data))
@@ -166,7 +193,7 @@ LOOP:
 					break LOOP
 				}
 				*chans.out <- "D" + string(ans) // send ans to out chan
-			}
+			}*/
 		default:
 			fmt.Println("Error: wrong message type")
 			conn.Write([]byte("EWrong message type!\n\r"))
