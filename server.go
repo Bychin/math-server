@@ -35,31 +35,43 @@ func filterNewLines(s string) string {
 	}, s)
 }
 
+// Closes conn and deletes func from funcMap if exists
+func closeConn(conn net.Conn, funcMap map[string]*inOutChans, chans *inOutChans) {
+	name := conn.RemoteAddr().String()
+	for key, value := range funcMap {
+		if value.in == chans.in {
+			delete(funcMap, key)
+		}
+	}
+
+	conn.Close()
+	fmt.Println(name, "disconnected")
+}
+
 func handleConnection(conn net.Conn, funcMap map[string]*inOutChans, mu, mu2 *sync.Mutex) {
 	name := conn.RemoteAddr().String()
 
 	fmt.Printf("%+v connected\n", name)
-	//conn.Write([]byte("Hello, " + name + ", type \"Exit\" to exit.\n"))
-	defer conn.Close()
 
 	scanner := bufio.NewReader(conn)
-
 	dataChan := make(chan string)
 	chans := &inOutChans{in: &dataChan, out: nil}
+
+	defer closeConn(conn, funcMap, chans)
 LOOP:
 	for {
 		msgType, err := scanner.ReadByte()
 		if err != nil {
 			fmt.Println("Error: can't read message type")
 			conn.Write([]byte("ECan't read message type!\n\r"))
-			fmt.Println(name, "disconnected")
+			//fmt.Println(name, "disconnected")
 			break
 		}
-		buf, err := scanner.ReadBytes('\n')
+		buf, err := scanner.ReadBytes('\n') // because of this, please always add '\n' at the end of your message
 		if err != nil {
 			fmt.Println("Error: can't read message content")
 			conn.Write([]byte("ECan't read message content!\n\r"))
-			fmt.Println(name, "disconnected")
+			//fmt.Println(name, "disconnected")
 			break
 		}
 		text := filterNewLines(string(buf))
@@ -67,7 +79,7 @@ LOOP:
 
 		switch msgType {
 		case 'C': // CALC - conn asks to calculate calcQuery.Function with parameters stored in calcQuery.Data
-			fmt.Println("CALC request")
+			fmt.Println(name, "- CALC request")
 			c := &calcQuery{}
 			err = json.Unmarshal(buf, c) // get params
 			if err != nil {
@@ -90,17 +102,16 @@ LOOP:
 			mu.Unlock()
 
 			// mutex here, so nobody can rebind outChan
-			*sendChan <- string(c.Data) // send params to func holder
-			answer := <-dataChan        // get answer
+			*sendChan <- string(c.Data) + "\n" // send params to func holder
+			answer := <-dataChan               // get answer
 			mu2.Unlock()
 
-			// send answer to conn
 			fmt.Println("Operation was done, closing conn")
-			conn.Write([]byte(answer))
-			break LOOP
+			conn.Write([]byte(answer)) // send answer to conn
+			continue
 
 		case 'P': // POST - conn tries to declare it's postQuery.Function on server
-			fmt.Println("POST request")
+			fmt.Println(name, "- POST request")
 
 			u := &postQuery{}
 			err = json.Unmarshal(buf, u)
@@ -111,22 +122,27 @@ LOOP:
 			}
 
 			mu.Lock()
+			if _, ok := funcMap[u.Function]; ok { // if func with this name is already in a map
+				fmt.Println("Function with name", u.Function, "is already exists in map!")
+				conn.Write([]byte("EFunction with this name is already exists!\n\r"))
+				mu.Unlock()
+				break LOOP
+			}
 			funcMap[u.Function] = chans
 			mu.Unlock()
 			fmt.Printf("Added to map:\n%v\n", funcMap)
 
 		case 'R': // READY - conn is now ready to execute others CALC requests
-			for { // how to close? (with func remove from map)
-				fmt.Println("conn is ready to go!")
-
+			fmt.Println(name, "- READY request")
+			for {
 				data := <-dataChan // get values from chan
 				conn.Write([]byte("C" + data))
 				ans, err := scanner.ReadBytes('\n')
-				if err != nil {
+				if err != nil { // Can be caused by closing READY connection
 					fmt.Println("Error: can't read answer content")
 					conn.Write([]byte("ECan't read answer content!\n\r"))
-					*chans.out <- "ECan't read answer content!"
-					continue
+					*chans.out <- "ECan't read answer content!\n\r"
+					break LOOP
 				}
 				*chans.out <- "D" + string(ans) // send ans to out chan
 			}
@@ -141,7 +157,7 @@ LOOP:
 
 func main() {
 	funcMap := make(map[string]*inOutChans) // function -> input and output chans
-	muMap := &sync.Mutex{}
+	muMap := &sync.Mutex{}                  // locks all r/w operations with funcMap
 	muChans := &sync.Mutex{}
 	listner, err := net.Listen("tcp", ":8080")
 	if err != nil {
