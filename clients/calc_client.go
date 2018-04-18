@@ -19,6 +19,10 @@ func main() {
 		panic(err)
 	}
 	fmt.Println("Answer was recieved:", message)
+	// Now you can check type of message by switch message[0]
+	// and then unmarshal it properly with server's rules
+	// after that all data's structure is depended
+	// on another client
 
 	conn.Write([]byte("C{\"func\":\"div\",\"data\":\"div_data\"}\n")) // always add \n at the end!
 	message, err = reader.ReadString('\n')
@@ -26,6 +30,7 @@ func main() {
 		panic(err)
 	}
 	fmt.Println("Answer was recieved:", message)
+	// Same here
 
 	conn.Close()
 }

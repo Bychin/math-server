@@ -9,6 +9,31 @@ import (
 	"sync"
 )
 
+// This is a simple TCP server with it's own communication protocol over TCP
+// All messages to server should end with '\n' character, server does the same rule
+// There are several message types: P, R, C, E, D, R, L, M, S
+// P - POST  - notifies the server that it can handle the function described in postQuery struct
+//             Ex.: "P{"func":"division"}\n"
+// R - READY - notifies the server that it is ready to handle it's function
+//             Ex.: "R\n"
+// C - CALC  - asks server to calculate function with parameters desribed in calcQuery
+//             Ex.: "C{\"func\":\"mul\",\"data\":\"my_data\"}\n"
+// E - ERROR - error message
+//             Ex.: "ESomething bad happened!\n"
+// D - DONE  - contains result of CALC message if it was processed successfully
+//             Ex.: "D{"Your data"}\n"
+// R - REG   - registers client on server with parameters in logQuery struct
+//             Ex.:
+// L - LOGIN - logins client on server with parameters in logQuery struct
+//             Ex.:
+// M - MSG   - sends private message to another client with parameters in msgQuery struct
+//             Ex.:
+// S - STR   - streams message to everyone
+//             Ex.: "Shi there!\n"
+
+// The server can work with income messages of types P, R, C, R, L, M, S
+// The client should be able to handle C, D, E, M -messages
+
 type postQuery struct {
 	Function string `json:"func"`
 }
@@ -16,6 +41,11 @@ type postQuery struct {
 type calcQuery struct {
 	Function string          `json:"func"`
 	Data     json.RawMessage `json:"data"`
+}
+
+type logQuery struct {
+	Login    string `json:"login"`
+	Password string `json:"pass"`
 }
 
 type inOutChans struct {
@@ -64,14 +94,12 @@ LOOP:
 		if err != nil {
 			fmt.Println("Error: can't read message type")
 			conn.Write([]byte("ECan't read message type!\n\r"))
-			//fmt.Println(name, "disconnected")
 			break
 		}
 		buf, err := scanner.ReadBytes('\n') // because of this, please always add '\n' at the end of your message
 		if err != nil {
 			fmt.Println("Error: can't read message content")
 			conn.Write([]byte("ECan't read message content!\n\r"))
-			//fmt.Println(name, "disconnected")
 			break
 		}
 		text := filterNewLines(string(buf))
@@ -96,12 +124,11 @@ LOOP:
 				conn.Write([]byte("EYour function wasn't registered on server!\n\r"))
 				break LOOP
 			}
-			mu2.Lock()
+			mu2.Lock() // mutex here, so nobody can't rebind outChan until operation is done
 			funcMap[c.Function].out = &dataChan
 			sendChan := funcMap[c.Function].in
 			mu.Unlock()
 
-			// mutex here, so nobody can rebind outChan
 			*sendChan <- string(c.Data) + "\n" // send params to func holder
 			answer := <-dataChan               // get answer
 			mu2.Unlock()
