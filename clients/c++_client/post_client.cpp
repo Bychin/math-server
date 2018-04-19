@@ -2,11 +2,23 @@
 #include <vector>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <unistd.h>
 
 #include "json.hpp"
+#define MSG_SIZE 300
 
 using json = nlohmann::json;
 
+
+int send_string(int socket_desc, std::string string_to_send) {
+    int sended = send(socket_desc, string_to_send.c_str(), string_to_send.size(), 0);
+    if (sended != string_to_send.size()) {
+        std::cout << "[-] Error sending this to server:\n" << string_to_send;
+        return -1;
+    } else {
+        return 1;
+    }
+}
 
 int main(int argc, char **argv) {
 	/*
@@ -15,7 +27,7 @@ int main(int argc, char **argv) {
 	 * Пример: client.exe 127.0.0.1 8080.
 	 */
 	if (argc != 3) {
-        printf( "Error! Expected 3 parameters: ./client <ip> <port>\n");
+        std::cout << "[-] Error! Expected 3 parameters: ./client <ip> <port>" << std::endl;
         return -1;
     }
 
@@ -28,9 +40,10 @@ int main(int argc, char **argv) {
      */
     int socket_desc = socket(AF_INET, SOCK_STREAM, 0);
     if (socket_desc < 0) { 
-        printf("Could not create socket.\n");
+        std::cout << "[-] Could not create socket." << std::endl;
         return -2;
     }
+    std::cout << "[+] Socket successfully created." << std::endl;
 
     /*
      * sockaddr_in - специальная структура с информацией о сервере.
@@ -44,29 +57,36 @@ int main(int argc, char **argv) {
      * Пытаемся подключиться к серверу.
      */
     if (connect(socket_desc, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        printf("Could not connect to remote server.\n");
+        std::cout << "[-] Could not connect to remote server." << std::endl;
         return -3;
     }
+    std::cout << "[+] Successfully connected to server." << std::endl;
 
-    std::string hello = "P{\"func\":\"mul\"}";
-    hello.push_back('\n');
-    send(socket_desc , hello.c_str() , hello.size() , 0 );
-/*
-    char n[1] = {'\n'};
-    while (true) {
-    	std::cin >> hello;
-    	if (hello[0] == 'e') {
-    		break;
-    	}
-    	send(socket_desc , hello.c_str() , hello.size() , 0 );
-    	send(socket_desc , n , 1, 0 );
+    /*
+     * Ожидание запросов на вычисление, отправка результатов.
+     * При разрыве соедининия с сервером - выход из цикла.
+     */
+    char server_message[MSG_SIZE];
+
+    // Послать на сервер запрос типа P на регистрацию функции.
+    std::string buf = "P{\"func\":\"mul\"}\n";
+    send_string(socket_desc, buf);
+
+    // Послать на сервер информацию о том, что мы готовы заняться
+    // вычислениями.
+    buf = "R\n";
+    send_string(socket_desc, buf);
+
+    // Начать общение с сервером, принимать, обрабатывать и отсылать информацию.
+    while (recv(socket_desc, server_message, MSG_SIZE, 0) > 0) {
+        std::cout << "[+] Task was recieved: " << server_message;
+
+        /*
+         * (Обработка запроса, вычисления).
+         */
+
+        send_string(socket_desc, "Answer for: " + std::string(server_message)); // Отправка результатов
     }
-   */ 
 
-/*
-    json s;
-    s["name"] = "Habrahabr";
-    std::cout << s.dump() << std::endl;
-*/
     return 0;
 }
