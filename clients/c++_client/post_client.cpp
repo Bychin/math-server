@@ -2,10 +2,12 @@
 #include <vector>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+
 #include <unistd.h>
 
 #include "json.hpp"
 #define MSG_SIZE 300
+
 
 using json = nlohmann::json;
 
@@ -19,6 +21,7 @@ int send_string(int socket_desc, std::string string_to_send) {
         return 1;
     }
 }
+
 
 int main(int argc, char **argv) {
 	/*
@@ -39,7 +42,7 @@ int main(int argc, char **argv) {
      * Переменная socket_desc < 0, если не удалось инициировать сокет.
      */
     int socket_desc = socket(AF_INET, SOCK_STREAM, 0);
-    if (socket_desc < 0) { 
+    if (socket_desc < 0) {
         std::cout << "[-] Could not create socket." << std::endl;
         return -2;
     }
