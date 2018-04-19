@@ -1,7 +1,23 @@
-project ("C++ clients for math-server")
-set (CMAKE_CXX_STANDARD 11)
+PROJECT ("C++ clients for math-server")
+SET (CMAKE_CXX_STANDARD 11)
 
-# Post client
-add_executable(post_client post_client.cpp json.hpp)
-# Calc client
-#add_executable(calc_client calc_client.cpp json.hpp)
+# Src declaration
+SET(SRC_POST_CLIENT src/post_client.cpp)
+SET(SRC_CALC_CLIENT src/calc_client.cpp)
+SET(SRC_COMMON src/common.h src/common.cpp)
+SET(SRC_JSON src/json.hpp)
+
+# Add executables
+add_executable(
+	post_client
+	${SRC_POST_CLIENT}
+	${SRC_COMMON}
+	${SRC_JSON}
+)
+
+add_executable(
+	calc_client
+	${SRC_CALC_CLIENT}
+	${SRC_COMMON}
+	${SRC_JSON}
+)

@@ -1,35 +1,23 @@
 #include <iostream>
-#include <vector>
 #include <sys/socket.h>
 #include <arpa/inet.h>
-
 #include <unistd.h>
 
 #include "json.hpp"
+#include "common.h"
 #define MSG_SIZE 300
 
 using json = nlohmann::json;
 
 
-int send_string(int socket_desc, std::string string_to_send) {
-    int sended = send(socket_desc, string_to_send.c_str(), string_to_send.size(), 0);
-    if (sended != string_to_send.size()) {
-        std::cout << "[-] Error sending this to server:\n" << string_to_send;
-        return -1;
-    } else {
-        return 1;
-    }
-}
-
-
 int main(int argc, char **argv) {
 	/*
 	 * Проверка на количество параметров. 
-	 * Нам нужно 2: ip и port сервера.
-	 * Пример: client.exe 127.0.0.1 8080.
+	 * Нам нужно 4: ip, port сервера, логин и пароль.
+	 * Пример: post_client.exe 127.0.0.1 8080 arseny 123
 	 */
-	if (argc != 3) {
-        std::cout << "[-] Error! Expected 3 parameters: ./client <ip> <port>" << std::endl;
+	if (argc != 5) {
+        std::cout << "[-] Error! Expected 4 parameters: post_client.exe <ip> <port> <login> <password>" << std::endl;
         return -1;
     }
 
@@ -69,16 +57,41 @@ int main(int argc, char **argv) {
      * Ожидание запросов на вычисление, отправка результатов.
      * При разрыве соедининия с сервером - выход из цикла.
      */
-    char server_message[MSG_SIZE];
+    char server_message[MSG_SIZE], msgType[1];
+
+    // Залогиниться на сервере и проверить, что все прошло удачно
+    json logging_query = json({
+        {"login", std::string(argv[3])},
+        {"pass",  std::string(argv[4])}
+    });
+    send_string(socket_desc, build_request("I", logging_query)); // Послать запрос на логирование
+
+    // Проверка ответа сервера
+    if (recv(socket_desc, msgType, 1, 0) < 0) {
+        std::cout << "[-] Error! Cannot read message type from server after logging" << std::endl;
+        return -4;
+    }
+
+    if (recv(socket_desc, server_message, MSG_SIZE, 0) < 0) {
+        std::cout << "[-] Error! Cannot read message from server after logging" << std::endl;
+        return -5;
+    }
+
+    if (msgType[0] == 'E') {
+        std::cout << "[-] " << server_message; 
+        return -6;
+    }
+    std::cout << "[+] " << server_message;
+    memset(server_message, 0, MSG_SIZE); // Очистить массив для дальнейшего использования
 
     // Послать на сервер запрос типа P на регистрацию функции.
-    std::string buf = "P{\"func\":\"mul\"}\n";
-    send_string(socket_desc, buf);
+    json post_query = json({
+        {"func", "mul"}
+    });
+    send_string(socket_desc, build_request("P", post_query));
 
-    // Послать на сервер информацию о том, что мы готовы заняться
-    // вычислениями.
-    buf = "R\n";
-    send_string(socket_desc, buf);
+    // Послать на сервер информацию о том, что мы готовы заняться вычислениями.
+    send_string(socket_desc, "R\n");
 
     // Начать общение с сервером, принимать, обрабатывать и отсылать информацию.
     while (recv(socket_desc, server_message, MSG_SIZE, 0) > 0) {
@@ -89,6 +102,7 @@ int main(int argc, char **argv) {
          */
 
         send_string(socket_desc, "Answer for: " + std::string(server_message)); // Отправка результатов
+        memset(server_message, 0, MSG_SIZE); // Очистить массив для дальнейшего использования
     }
 
     return 0;
