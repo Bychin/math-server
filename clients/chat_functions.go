@@ -48,6 +48,25 @@ func SendMessages(conn net.Conn) {
 	}
 }
 
+func StreamMessages(login string, conn net.Conn) {
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		fmt.Print("\n[OUT] Enter message: ")
+		msg, _ := reader.ReadString('\n')
+		m := &MsgQuery{
+			Receiver: login, // sender here
+			Message:  strings.TrimSpace(msg),
+		}
+		byt, err := json.Marshal(m)
+		if err != nil {
+			panic(err)
+		}
+		conn.Write([]byte("S"))
+		conn.Write(byt)
+		conn.Write([]byte("\n")) // always add \n at the end!
+	}
+}
+
 func ReadMessages(reader bufio.Reader) {
 	for {
 		msgType, err := reader.ReadByte()

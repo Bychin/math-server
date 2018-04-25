@@ -36,7 +36,7 @@ import (
 // M - MSG   - sends private message to another client with parameters in msgQuery struct
 //             Ex.:
 // S - STR   - streams message to everyone
-//             Ex.: "Shi there!\n"
+//             Ex.: ""
 
 // The server can work with income messages of types P, R, C, U, I, M, S
 // The client should be able to handle O, C, D, E, M -messages
@@ -247,7 +247,18 @@ LOOP:
 				conn.Write([]byte("EYou should login first!\r\n"))
 				break LOOP
 			}
-			// TODO
+
+			mu2.Lock()
+			for key, value := range activeUsers {
+				if key == login {
+					continue
+				}
+				value.conn.Write([]byte("M"))
+				value.conn.Write(buf) // error check here?
+				//value.conn.Write([]byte("\n"))
+			}
+			mu2.Unlock()
+			continue LOOP
 
 		case 'C': // CALC - conn asks to calculate calcQuery.Function with parameters stored in calcQuery.Data
 			log.Println(name, "- [OK]: CALC request")
@@ -310,7 +321,7 @@ LOOP:
 			}
 			funcMap[u.Function] = login
 			mu.Unlock()
-			log.Printf(name, "- [OK]: added to map:\n%v\n", funcMap)
+			log.Printf("%s - [OK]: added to map:\n%v\n", name, funcMap)
 
 		case 'R': // READY - conn is now ready to execute others CALC requests
 			log.Println(name, "- [OK]: READY request")
@@ -346,8 +357,8 @@ func main() {
 		log.Fatalf("server - [ERR]: Cannot open log file: %v", err)
 	}
 	defer logFile.Close()
-	mw := io.MultiWriter(os.Stdout, logFile)
-	log.SetOutput(mw)
+	//mw := io.MultiWriter(os.Stdout, logFile)
+	//log.SetOutput(mw)
 	log.Println("Starting server...")
 
 	muMap := &sync.Mutex{}   // locks all r/w operations with funcMap

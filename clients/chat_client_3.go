@@ -14,11 +14,11 @@ func main() {
 	reader := bufio.NewReader(conn)
 
 	// login first if you have already registered
-	Login("pavel", conn, *reader)
+	Login("pavel3", conn, *reader)
 
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
-	go SendMessages(conn)
+	go StreamMessages("pavel3", conn)
 	go ReadMessages(*reader)
 
 	wg.Wait()
