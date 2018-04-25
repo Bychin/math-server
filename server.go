@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
@@ -54,9 +55,9 @@ type logQuery struct {
 }
 
 var (
-	registeredUsers = "./database.txt"         // TODO: redis?
-	activeUsers     = map[string]*inOutChans{} // login -> ut's conn chans
-	funcMap         = map[string]string{}      // func -> login that can handle it
+	registeredUsers = "./database.txt"        // TODO: redis?
+	activeUsers     = map[string]*connChans{} // login -> it's conn chans and conn itself
+	funcMap         = map[string]string{}     // func -> login that can handle it
 )
 
 type msgQuery struct {
@@ -67,6 +68,11 @@ type msgQuery struct {
 type inOutChans struct {
 	in  *chan string
 	out *chan string
+}
+
+type connChans struct {
+	chans *inOutChans
+	conn  net.Conn
 }
 
 // Filters s to get rid of all escape characters as '\n', '\r', etc...
@@ -82,7 +88,7 @@ func filterNewLines(s string) string {
 }
 
 // Logins or registers user with login and pass
-func loginOrRegister(login, pass string, reg bool, chans *inOutChans) bool /*, error*/ {
+func loginOrRegister(login, pass string, reg bool, chans *connChans) bool /*, error*/ {
 	file, err := os.Open(registeredUsers)
 	defer file.Close()
 	if err != nil {
@@ -136,13 +142,19 @@ func handleConnection(conn net.Conn, mu, mu2 *sync.Mutex) {
 
 	scanner := bufio.NewReader(conn)
 	dataChan := make(chan string)
-	chans := &inOutChans{in: &dataChan, out: nil}
+	chans := &connChans{
+		conn:  conn,
+		chans: &inOutChans{in: &dataChan, out: nil},
+	} //&inOutChans{in: &dataChan, out: nil}
 
 	defer closeConn(conn, &login)
 LOOP:
 	for {
 		msgType, err := scanner.ReadByte()
-		if err != nil {
+		if err == io.EOF {
+			fmt.Println(name, "- EOF")
+			break
+		} else if err != nil {
 			fmt.Println("Error: can't read message type")
 			conn.Write([]byte("ECan't read message type!\r\n"))
 			break
@@ -206,7 +218,28 @@ LOOP:
 				conn.Write([]byte("EYou should login first!\r\n"))
 				break LOOP
 			}
-			// TODO
+			m := &msgQuery{}
+			err = json.Unmarshal(buf, m)
+			if err != nil {
+				fmt.Println("Can't unmarshal buf")
+				conn.Write([]byte("EServer can't unmarshal message content!\r\n"))
+				break LOOP
+			}
+			mu2.Lock()
+			resChan, ok := activeUsers[m.Receiver]
+			if !ok { // if user-receiver is not logged in
+				fmt.Println("User", m.Receiver, "is not logged in!")
+				conn.Write([]byte("EReceiver is not logged in!\r\n"))
+				mu2.Unlock()
+				continue LOOP
+			}
+			m.Receiver = login
+			msg, _ := json.Marshal(m)
+			resChan.conn.Write([]byte("M"))
+			resChan.conn.Write(msg) // error check
+			resChan.conn.Write([]byte("\n"))
+			mu2.Unlock()
+			continue LOOP
 
 		case 'S': // STREAM
 			fmt.Println(name, "- STR request")
@@ -241,8 +274,8 @@ LOOP:
 				continue LOOP
 			}
 			mu2.Lock() // mutex here, so nobody can't rebind outChan until operation is done
-			activeUsers[handler].out = &dataChan
-			sendChan := activeUsers[handler].in
+			activeUsers[handler].chans.out = &dataChan
+			sendChan := activeUsers[handler].chans.in
 			mu.Unlock()
 
 			*sendChan <- string(c.Data) + "\n" // send params to func holder
@@ -295,10 +328,10 @@ LOOP:
 				if err != nil { // Can be caused by closing READY connection
 					fmt.Println("Error: can't read answer content")
 					conn.Write([]byte("ECan't read answer content!\r\n"))
-					*chans.out <- "ECan't read answer content!\r\n"
+					*chans.chans.out <- "ECan't read answer content!\r\n"
 					break LOOP
 				}
-				*chans.out <- "D" + string(ans) // send ans to out chan
+				*chans.chans.out <- "D" + string(ans) // send ans to out chan
 			}
 		default:
 			fmt.Println("Error: wrong message type")
@@ -310,9 +343,8 @@ LOOP:
 }
 
 func main() {
-	//funcMap := make(map[string]string) // function -> user that can handle it //input and output chans
-	muMap := &sync.Mutex{} // locks all r/w operations with funcMap
-	muChans := &sync.Mutex{}
+	muMap := &sync.Mutex{}   // locks all r/w operations with funcMap
+	muChans := &sync.Mutex{} // locks all r/w operations with activeUsers
 	listner, err := net.Listen("tcp", ":8080")
 	if err != nil {
 		panic(err)
