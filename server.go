@@ -16,30 +16,35 @@ import (
 // All messages to server should end with '\n' character, server does the same rule
 
 // There are several message types: P, R, C, E, D, U, I, O, M, S
+// The server can work with income messages of types P, R, C, U, I, M, S
+// The client should be able to handle O, C, D, E, M -messages
+
 // P - POST  - notifies the server that it can handle the function described in postQuery struct
-//             Ex.: "P{"func":"division"}\n"
+//             Ex.: 'P{"func":"division"}\n'
 // R - READY - notifies the server that it is ready to handle it's function
 //             Ex.: "R\n"
 // C - CALC  - asks server to calculate function with parameters desribed in calcQuery.
-//             Server does not actually calculate anything, it's task just
-//             to transfer all data to appropriate R conn, get back the answer and pass it to C sender
-//             Ex.: "C{\"func\":\"mul\",\"data\":\"my_data\"}\n"
+//             Server does not actually calculate anything, it's task just to transfer all data
+//             to appropriate R conn, get back the answer and pass it to C sender
+//             Ex.: 'C{"func":"mul","data":"my_data"}\n'
 // E - ERROR - error message
 //             Ex.: "ESomething bad happened!\n"
 // D - DONE  - contains result of CALC message if it was processed successfully
 //             Ex.: "D{"Your data"}\n"
 // U - UP    - registers (signs up) client on server with parameters in logQuery struct
-//             Ex.:
+//             Ex.: 'U{"login":"Pavel","pass":"secret"}\n' - server will check whether login
+//             "Pavel" exists and if it's not - add it to registeredUsers with password
 // I - IN    - logins (signs in) client on server with parameters in logQuery struct
-//             Ex.:
+//             Ex.: 'I{"login":"Pavel","pass":"secret"}\n' - server will check whether login
+//             "Pavel" exists in registeredUsers and then will check password
 // O - OK    - always sends from server after client's U or I message if it was succsessful
 // M - MSG   - sends private message to another client with parameters in msgQuery struct
-//             Ex.:
-// S - STR   - streams message to everyone
-//             Ex.: ""
-
-// The server can work with income messages of types P, R, C, U, I, M, S
-// The client should be able to handle O, C, D, E, M -messages
+//             Ex.: 'M{"rec":"Pavel","msg":"Hi!"}\n' - server will send message "Hi!" to user
+//             with login "Pavel" from activeUsers map
+// S - STR   - streams message to everyone, uses msgQuery struct for it, but in Receiver field
+//             holds sender's login
+//             Ex.: 'S{"rec":"sender","msg":"Hi!"}\n' - server will send message "Hi!" to every user
+//             in activeUsers map except sender with M type
 
 type postQuery struct {
 	Function string `json:"func"`
@@ -255,7 +260,6 @@ LOOP:
 				}
 				value.conn.Write([]byte("M"))
 				value.conn.Write(buf) // error check here?
-				//value.conn.Write([]byte("\n"))
 			}
 			mu2.Unlock()
 			continue LOOP
@@ -357,8 +361,8 @@ func main() {
 		log.Fatalf("server - [ERR]: Cannot open log file: %v", err)
 	}
 	defer logFile.Close()
-	//mw := io.MultiWriter(os.Stdout, logFile)
-	//log.SetOutput(mw)
+	mw := io.MultiWriter(os.Stdout, logFile)
+	log.SetOutput(mw)
 	log.Println("Starting server...")
 
 	muMap := &sync.Mutex{}   // locks all r/w operations with funcMap
