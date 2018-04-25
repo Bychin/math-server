@@ -3,12 +3,13 @@ package main
 import (
 	"bufio"
 	"encoding/json"
-	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 // This is a simple TCP server with it's own communication protocol over TCP
@@ -54,12 +55,6 @@ type logQuery struct {
 	Password string `json:"pass"`
 }
 
-var (
-	registeredUsers = "./database.txt"        // TODO: redis?
-	activeUsers     = map[string]*connChans{} // login -> it's conn chans and conn itself
-	funcMap         = map[string]string{}     // func -> login that can handle it
-)
-
 type msgQuery struct {
 	Receiver string `json:"rec"`
 	Message  string `json:"msg"`
@@ -74,6 +69,12 @@ type connChans struct {
 	chans *inOutChans
 	conn  net.Conn
 }
+
+var (
+	registeredUsers = "./database.txt"        // TODO: redis?
+	activeUsers     = map[string]*connChans{} // login -> it's conn chans and conn itself
+	funcMap         = map[string]string{}     // func -> login that can handle it
+)
 
 // Filters s to get rid of all escape characters as '\n', '\r', etc...
 func filterNewLines(s string) string {
@@ -131,104 +132,102 @@ func closeConn(conn net.Conn, login *string) {
 	}
 	delete(activeUsers, *login)
 	conn.Close()
-	fmt.Println(name, "disconnected")
+	log.Println(name, "- [OK]: disconnected")
 }
 
 func handleConnection(conn net.Conn, mu, mu2 *sync.Mutex) {
 	name := conn.RemoteAddr().String()
-	var login string
-
-	fmt.Printf("%+v connected\n", name)
+	log.Println(name, "- [OK]: connected")
 
 	scanner := bufio.NewReader(conn)
 	dataChan := make(chan string)
 	chans := &connChans{
 		conn:  conn,
 		chans: &inOutChans{in: &dataChan, out: nil},
-	} //&inOutChans{in: &dataChan, out: nil}
-
+	}
+	var login string
 	defer closeConn(conn, &login)
 LOOP:
 	for {
 		msgType, err := scanner.ReadByte()
 		if err == io.EOF {
-			fmt.Println(name, "- EOF")
+			log.Println(name, "- [EOF]")
 			break
 		} else if err != nil {
-			fmt.Println("Error: can't read message type")
+			log.Println(name, "- [ERR]: can't read message type")
 			conn.Write([]byte("ECan't read message type!\r\n"))
 			break
 		}
 		buf, err := scanner.ReadBytes('\n') // because of this, please always add '\n' at the end of your message
 		if err != nil {
-			fmt.Println("Error: can't read message content")
+			log.Println(name, "- [ERR]: can't read message content")
 			conn.Write([]byte("ECan't read message content!\r\n"))
 			break
 		}
 		text := filterNewLines(string(buf))
-		fmt.Printf("type: %s, data: %s\n", string(msgType), text)
+		log.Printf("%s - type: %s, data: %s\n", name, string(msgType), text)
 
 		switch msgType {
 		case 'U': // SIGN UP
-			fmt.Println(name, "- UP request")
+			log.Println(name, "- [OK]: UP request")
 			r := &logQuery{}
 			err = json.Unmarshal(buf, r)
 			if err != nil {
-				fmt.Println("Can't unmarshal buf")
+				log.Println(name, "- [ERR]: can't unmarshal buf")
 				conn.Write([]byte("EServer can't unmarshal message content!\r\n"))
 				break LOOP
 			}
 			result := loginOrRegister(r.Login, r.Password, true, nil)
 			if !result || r.Login == "" {
-				fmt.Println("Attempt to register with not unique login")
+				log.Println(name, "- [ERR]: attempt to register with not unique login")
 				conn.Write([]byte("EThis login has already been taken\r\n"))
 				break LOOP
 			} else {
-				fmt.Println(name, "- registered succsessfully")
+				log.Println(name, "- [OK]: registered succsessfully")
 				conn.Write([]byte("OSuccsessfully signed up\r\n"))
 			}
-			//login = r.Login
+			// login = r.Login
 			continue LOOP
 
 		case 'I': // SIGN IN
-			fmt.Println(name, "- IN request")
+			log.Println(name, "- [OK]: IN request")
 			l := &logQuery{}
 			err = json.Unmarshal(buf, l)
 			if err != nil {
-				fmt.Println("Can't unmarshal buf")
+				log.Println(name, "- [ERR]: can't unmarshal buf")
 				conn.Write([]byte("EServer can't unmarshal message content!\r\n"))
 				break LOOP
 			}
 			result := loginOrRegister(l.Login, l.Password, false, chans)
 			if !result {
-				fmt.Println("Attempt to login in with wrong login/pass")
+				log.Println(name, "- [ERR]: attempt to login in with wrong login/pass")
 				conn.Write([]byte("EWrong login/pass\r\n"))
 				break LOOP
 			} else {
-				fmt.Println(name, "- logged in succsessfully")
+				log.Println(name, "- [OK]: logged in succsessfully")
 				conn.Write([]byte("OSuccsessfully logged in\r\n"))
 			}
 			login = l.Login
 			continue LOOP
 
 		case 'M': // MESSAGE
-			fmt.Println(name, "- MSG request")
+			log.Println(name, "- [OK]: MSG request")
 			if login == "" { //check login
-				fmt.Println("Unlogged CALC request")
+				log.Println(name, "- [ERR]: unlogged MSG request")
 				conn.Write([]byte("EYou should login first!\r\n"))
 				break LOOP
 			}
 			m := &msgQuery{}
 			err = json.Unmarshal(buf, m)
 			if err != nil {
-				fmt.Println("Can't unmarshal buf")
+				log.Println(name, "- [ERR]: can't unmarshal buf")
 				conn.Write([]byte("EServer can't unmarshal message content!\r\n"))
 				break LOOP
 			}
 			mu2.Lock()
 			resChan, ok := activeUsers[m.Receiver]
 			if !ok { // if user-receiver is not logged in
-				fmt.Println("User", m.Receiver, "is not logged in!")
+				log.Println(name, "- [ERR]: user", m.Receiver, "is not logged in!")
 				conn.Write([]byte("EReceiver is not logged in!\r\n"))
 				mu2.Unlock()
 				continue LOOP
@@ -242,25 +241,25 @@ LOOP:
 			continue LOOP
 
 		case 'S': // STREAM
-			fmt.Println(name, "- STR request")
+			log.Println(name, "- [OK]: STR request")
 			if login == "" { //check login
-				fmt.Println("Unlogged CALC request")
+				log.Println(name, "- [ERR]: unlogged STR request")
 				conn.Write([]byte("EYou should login first!\r\n"))
 				break LOOP
 			}
 			// TODO
 
 		case 'C': // CALC - conn asks to calculate calcQuery.Function with parameters stored in calcQuery.Data
-			fmt.Println(name, "- CALC request")
+			log.Println(name, "- [OK]: CALC request")
 			if login == "" { //check login
-				fmt.Println("Unlogged CALC request")
+				log.Println(name, "- [ERR]: unlogged CALC request")
 				conn.Write([]byte("EYou should login first!\r\n"))
 				break LOOP
 			}
 			c := &calcQuery{}
 			err = json.Unmarshal(buf, c) // get params
 			if err != nil {
-				fmt.Println("Can't unmarshal buf")
+				log.Println(name, "- [ERR]: can't unmarshal buf")
 				conn.Write([]byte("EServer can't unmarshal message content!\r\n"))
 				break LOOP
 			}
@@ -269,7 +268,7 @@ LOOP:
 			handler, ok := funcMap[c.Function] // find func
 			if !ok {
 				mu.Unlock()
-				fmt.Println("Can't find function", c.Function)
+				log.Println(name, "- [ERR]: can't find function", c.Function)
 				conn.Write([]byte("EThis function wasn't registered on server!\r\n"))
 				continue LOOP
 			}
@@ -282,14 +281,14 @@ LOOP:
 			answer := <-dataChan               // get answer
 			mu2.Unlock()
 
-			fmt.Println("Operation was done")
+			log.Println(name, "- [OK]: operation was done")
 			conn.Write([]byte(answer)) // send answer to conn
 			continue LOOP
 
 		case 'P': // POST - conn tries to declare it's postQuery.Function on server
-			fmt.Println(name, "- POST request")
+			log.Println(name, "- [OK]: POST request")
 			if login == "" { //check login
-				fmt.Println("Unlogged POST request")
+				log.Println(name, "- [ERR]: unlogged POST request")
 				conn.Write([]byte("EYou should login first!\r\n"))
 				break LOOP
 			}
@@ -297,26 +296,26 @@ LOOP:
 			u := &postQuery{}
 			err = json.Unmarshal(buf, u)
 			if err != nil {
-				fmt.Println("Can't unmarshal buf")
+				log.Println(name, "- [ERR]: can't unmarshal buf")
 				conn.Write([]byte("ECan't unmarshal buf!\r\n"))
 				continue LOOP
 			}
 
 			mu.Lock()
 			if _, ok := funcMap[u.Function]; ok { // if func with this name is already in a map
-				fmt.Println("Function with name", u.Function, "is already exists in map!")
+				log.Println(name, "- [ERR]: function with name", u.Function, "is already exists in map!")
 				conn.Write([]byte("EFunction with this name is already exists!\r\n"))
 				mu.Unlock()
 				break LOOP
 			}
 			funcMap[u.Function] = login
 			mu.Unlock()
-			fmt.Printf("Added to map:\n%v\n", funcMap)
+			log.Printf(name, "- [OK]: added to map:\n%v\n", funcMap)
 
 		case 'R': // READY - conn is now ready to execute others CALC requests
-			fmt.Println(name, "- READY request")
+			log.Println(name, "- [OK]: READY request")
 			if login == "" { //check login
-				fmt.Println("Unlogged READY request")
+				log.Println(name, "- [ERR]: unlogged READY request")
 				conn.Write([]byte("EYou should login first!\r\n"))
 				break LOOP
 			}
@@ -326,7 +325,7 @@ LOOP:
 				conn.Write([]byte("C" + data))
 				ans, err := scanner.ReadBytes('\n')
 				if err != nil { // Can be caused by closing READY connection
-					fmt.Println("Error: can't read answer content")
+					log.Println(name, "- [ERR]: can't read answer content")
 					conn.Write([]byte("ECan't read answer content!\r\n"))
 					*chans.chans.out <- "ECan't read answer content!\r\n"
 					break LOOP
@@ -334,15 +333,23 @@ LOOP:
 				*chans.chans.out <- "D" + string(ans) // send ans to out chan
 			}
 		default:
-			fmt.Println("Error: wrong message type")
+			log.Println(name, "- [ERR]: wrong message type")
 			conn.Write([]byte("EWrong message type!\r\n"))
 			break LOOP
 		}
-
 	}
 }
 
 func main() {
+	logFile, err := os.OpenFile("./logs/"+time.Now().String()+".log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		log.Fatalf("server - [ERR]: Cannot open log file: %v", err)
+	}
+	defer logFile.Close()
+	mw := io.MultiWriter(os.Stdout, logFile)
+	log.SetOutput(mw)
+	log.Println("Starting server...")
+
 	muMap := &sync.Mutex{}   // locks all r/w operations with funcMap
 	muChans := &sync.Mutex{} // locks all r/w operations with activeUsers
 	listner, err := net.Listen("tcp", ":8080")
