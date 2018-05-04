@@ -1,4 +1,4 @@
-#include <iostream>
+nclude <iostream>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
@@ -11,12 +11,12 @@ using json = nlohmann::json;
 
 
 int main(int argc, char **argv) {
-	/*
-	 * Проверка на количество параметров. 
-	 * Нам нужно 4: ip, port сервера, логин и пароль.
-	 * Пример: post_client.exe 127.0.0.1 8080 arseny 123
-	 */
-	if (argc != 5) {
+    /*
+     * Проверка на количество параметров. 
+     * Нам нужно 4: ip, port сервера, логин и пароль.
+     * Пример: post_client.exe 127.0.0.1 8080 arseny 123
+     */
+    if (argc != 5) {
         std::cout << "[-] Error! Expected 4 parameters: post_client.exe <ip> <port> <login> <password>" << std::endl;
         return -1;
     }
@@ -107,3 +107,4 @@ int main(int argc, char **argv) {
 
     return 0;
 }
+
