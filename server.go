@@ -95,7 +95,7 @@ func filterNewLines(s string) string {
 
 // Logins or registers user with login and pass
 func loginOrRegister(login, pass string, reg bool, chans *connChans) bool /*, error*/ {
-	file, err := os.Open(registeredUsers)
+	file, err := os.OpenFile(registeredUsers, os.O_APPEND|os.O_WRONLY, 0644)
 	defer file.Close()
 	if err != nil {
 		panic(err)
@@ -120,8 +120,11 @@ func loginOrRegister(login, pass string, reg bool, chans *connChans) bool /*, er
 		}
 	}
 	if reg {
-		file.WriteString(login + "---" + pass + "\n") // add to db
-		return true                                   // login is unique
+		_, err := file.WriteString(login + "---" + pass + "\n") // add to db
+		if err != nil {
+			panic(err)
+		}
+		return true // login is unique
 	}
 	return false // wrong login
 }
@@ -365,7 +368,7 @@ func main() {
 	log.SetOutput(mw)
 	log.Println("Starting server...")
 
-	muMap := &sync.Mutex{}   // locks all r/w operations with funcMap
+	muMap := &sync.Mutex{}   // locks all r/w operations with funcMap // TODO: RWMutex?
 	muChans := &sync.Mutex{} // locks all r/w operations with activeUsers
 	listner, err := net.Listen("tcp", ":8080")
 	if err != nil {
