@@ -95,7 +95,7 @@ func filterNewLines(s string) string {
 
 // Logins or registers user with login and pass
 func loginOrRegister(login, pass string, reg bool, chans *connChans) bool /*, error*/ {
-	file, err := os.OpenFile(registeredUsers, os.O_APPEND|os.O_WRONLY, 0644)
+	file, err := os.OpenFile(registeredUsers, os.O_RDWR, 0644)
 	defer file.Close()
 	if err != nil {
 		panic(err)
@@ -246,6 +246,7 @@ LOOP:
 			resChan.conn.Write(msg) // error check
 			resChan.conn.Write([]byte("\n"))
 			mu2.Unlock()
+			conn.Write([]byte("OMessage was sent\r\n"))
 			continue LOOP
 
 		case 'S': // STREAM
@@ -265,6 +266,7 @@ LOOP:
 				value.conn.Write(buf) // error check here?
 			}
 			mu2.Unlock()
+			conn.Write([]byte("OMessage was streamed\r\n"))
 			continue LOOP
 
 		case 'C': // CALC - conn asks to calculate calcQuery.Function with parameters stored in calcQuery.Data
@@ -300,7 +302,7 @@ LOOP:
 			mu2.Unlock()
 
 			log.Println(name, "- [OK]: operation was done")
-			conn.Write([]byte(answer)) // send answer to conn
+			conn.Write([]byte(answer)) // send answer to conn with 'D' header
 			continue LOOP
 
 		case 'P': // POST - conn tries to declare it's postQuery.Function on server
@@ -329,6 +331,7 @@ LOOP:
 			funcMap[u.Function] = login
 			mu.Unlock()
 			log.Printf("%s - [OK]: added to map:\n%v\n", name, funcMap)
+			conn.Write([]byte("OFunction was registered\r\n"))
 
 		case 'R': // READY - conn is now ready to execute others CALC requests
 			log.Println(name, "- [OK]: READY request")
