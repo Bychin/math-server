@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net"
@@ -75,11 +76,24 @@ type connChans struct {
 	conn  net.Conn
 }
 
-var (
-	registeredUsers = "./database.txt"        // TODO: redis?
-	activeUsers     = map[string]*connChans{} // login -> it's conn chans and conn itself
-	funcMap         = map[string]string{}     // func -> login that can handle it
-)
+type Server struct {
+	registeredUsers string                // TODO: redis
+	activeUsers     map[string]*connChans // login -> it's conn chans and conn itself
+	funcMap         map[string]string     // func -> login that can handle it
+
+	muMap   *sync.Mutex // locks all r/w operations with funcMap // TODO: RWMutex?
+	muChans *sync.Mutex // locks all r/w operations with activeUsers
+}
+
+func NewServer() *Server {
+	return &Server{
+		registeredUsers: "./database.txt",
+		activeUsers:     make(map[string]*connChans),
+		funcMap:         make(map[string]string),
+		muMap:           &sync.Mutex{},
+		muChans:         &sync.Mutex{},
+	}
+}
 
 // Filters s to get rid of all escape characters as '\n', '\r', etc...
 func filterNewLines(s string) string {
@@ -94,8 +108,8 @@ func filterNewLines(s string) string {
 }
 
 // Logins or registers user with login and pass
-func loginOrRegister(login, pass string, reg bool, chans *connChans) bool /*, error*/ {
-	file, err := os.OpenFile(registeredUsers, os.O_RDWR, 0644)
+func (s *Server) loginOrRegister(login, pass string, reg bool, chans *connChans) bool /*, error*/ {
+	file, err := os.OpenFile(s.registeredUsers, os.O_RDWR, 0644)
 	defer file.Close()
 	if err != nil {
 		panic(err)
@@ -112,8 +126,10 @@ func loginOrRegister(login, pass string, reg bool, chans *connChans) bool /*, er
 				return false // login isn't unique
 			}
 			if logPass[1] == pass+"\n" {
-				activeUsers[login] = chans // add to active users
-				return true                // succsessful login
+				s.muChans.Lock()
+				s.activeUsers[login] = chans // add to active users
+				s.muChans.Unlock()
+				return true // succsessful login
 			}
 			return false // wrong password
 
@@ -130,20 +146,55 @@ func loginOrRegister(login, pass string, reg bool, chans *connChans) bool /*, er
 }
 
 // Closes conn and deletes func from funcMap if exists
-func closeConn(conn net.Conn, login *string) {
+func (s *Server) closeConn(conn net.Conn, login *string) {
 	name := conn.RemoteAddr().String()
-	for key, value := range funcMap {
+	s.muMap.Lock()
+	for key, value := range s.funcMap {
 		if value == *login {
-			delete(funcMap, key)
+			delete(s.funcMap, key)
 			break
 		}
 	}
-	delete(activeUsers, *login)
+	s.muMap.Unlock()
+	s.muChans.Lock()
+	delete(s.activeUsers, *login)
+	s.muChans.Unlock()
 	conn.Close()
 	log.Println(name, "- [OK]: disconnected")
 }
 
-func handleConnection(conn net.Conn, mu, mu2 *sync.Mutex) {
+func (s *Server) handlePost(conn net.Conn, name, login string, buf []byte) error {
+	log.Println(name, "- [OK]: POST request")
+	if login == "" { //check login
+		log.Println(name, "- [ERR]: unlogged POST request")
+		conn.Write([]byte("EYou should login first!\r\n"))
+		return errors.New("unlogged POST request")
+	}
+
+	u := &postQuery{}
+	err := json.Unmarshal(buf, u)
+	if err != nil {
+		log.Println(name, "- [ERR]: can't unmarshal buf")
+		conn.Write([]byte("ECan't unmarshal buf!\r\n"))
+		return errors.New("can't unmarshal buf") //continue LOOP
+	}
+
+	s.muMap.Lock()
+	defer s.muMap.Unlock()
+	if _, ok := s.funcMap[u.Function]; ok { // if func with this name is already in a map
+		log.Println(name, "- [ERR]: function with name", u.Function, "is already exists in map!")
+		conn.Write([]byte("EFunction with this name is already exists!\r\n"))
+		// s.muMap.Unlock()
+		return errors.New("function is already exists in map")
+	}
+	s.funcMap[u.Function] = login
+	//s.muMap.Unlock()
+	log.Printf("%s - [OK]: added to map:\n%v\n\t", name, s.funcMap)
+	conn.Write([]byte("OFunction was registered\r\n"))
+	return nil
+}
+
+func (s *Server) handleConnection(conn net.Conn) {
 	name := conn.RemoteAddr().String()
 	log.Println(name, "- [OK]: connected")
 
@@ -154,7 +205,7 @@ func handleConnection(conn net.Conn, mu, mu2 *sync.Mutex) {
 		chans: &inOutChans{in: &dataChan, out: nil},
 	}
 	var login string
-	defer closeConn(conn, &login)
+	defer s.closeConn(conn, &login)
 LOOP:
 	for {
 		msgType, err := scanner.ReadByte()
@@ -185,7 +236,7 @@ LOOP:
 				conn.Write([]byte("EServer can't unmarshal message content!\r\n"))
 				break LOOP
 			}
-			result := loginOrRegister(r.Login, r.Password, true, nil)
+			result := s.loginOrRegister(r.Login, r.Password, true, nil)
 			if !result || r.Login == "" {
 				log.Println(name, "- [ERR]: attempt to register with not unique login")
 				conn.Write([]byte("EThis login has already been taken\r\n"))
@@ -206,7 +257,7 @@ LOOP:
 				conn.Write([]byte("EServer can't unmarshal message content!\r\n"))
 				break LOOP
 			}
-			result := loginOrRegister(l.Login, l.Password, false, chans)
+			result := s.loginOrRegister(l.Login, l.Password, false, chans)
 			if !result {
 				log.Println(name, "- [ERR]: attempt to login in with wrong login/pass")
 				conn.Write([]byte("EWrong login/pass\r\n"))
@@ -232,12 +283,12 @@ LOOP:
 				conn.Write([]byte("EServer can't unmarshal message content!\r\n"))
 				break LOOP
 			}
-			mu2.Lock()
-			resChan, ok := activeUsers[m.Receiver]
+			s.muChans.Lock()
+			resChan, ok := s.activeUsers[m.Receiver]
 			if !ok { // if user-receiver is not logged in
 				log.Println(name, "- [ERR]: user", m.Receiver, "is not logged in!")
 				conn.Write([]byte("EReceiver is not logged in!\r\n"))
-				mu2.Unlock()
+				s.muChans.Unlock()
 				continue LOOP
 			}
 			m.Receiver = login
@@ -245,7 +296,7 @@ LOOP:
 			resChan.conn.Write([]byte("M"))
 			resChan.conn.Write(msg) // error check
 			resChan.conn.Write([]byte("\n"))
-			mu2.Unlock()
+			s.muChans.Unlock()
 			conn.Write([]byte("OMessage was sent\r\n"))
 			continue LOOP
 
@@ -257,15 +308,15 @@ LOOP:
 				break LOOP
 			}
 
-			mu2.Lock()
-			for key, value := range activeUsers {
+			s.muChans.Lock()
+			for key, value := range s.activeUsers {
 				if key == login {
 					continue
 				}
 				value.conn.Write([]byte("M"))
 				value.conn.Write(buf) // error check here?
 			}
-			mu2.Unlock()
+			s.muChans.Unlock()
 			conn.Write([]byte("OMessage was streamed\r\n"))
 			continue LOOP
 
@@ -284,54 +335,32 @@ LOOP:
 				break LOOP
 			}
 
-			mu.Lock()
-			handler, ok := funcMap[c.Function] // find func
+			s.muMap.Lock()
+			handler, ok := s.funcMap[c.Function] // find func
 			if !ok {
-				mu.Unlock()
+				s.muMap.Unlock()
 				log.Println(name, "- [ERR]: can't find function", c.Function)
 				conn.Write([]byte("EThis function wasn't registered on server!\r\n"))
 				continue LOOP
 			}
-			mu2.Lock() // mutex here, so nobody can't rebind outChan until operation is done
-			activeUsers[handler].chans.out = &dataChan
-			sendChan := activeUsers[handler].chans.in
-			mu.Unlock()
+			s.muChans.Lock() // mutex here, so nobody can't rebind outChan until operation is done
+			s.activeUsers[handler].chans.out = &dataChan
+			sendChan := s.activeUsers[handler].chans.in
+			s.muMap.Unlock()
 
 			*sendChan <- string(c.Data) + "\n" // send params to func holder
 			answer := <-dataChan               // get answer
-			mu2.Unlock()
+			s.muChans.Unlock()
 
 			log.Println(name, "- [OK]: operation was done")
 			conn.Write([]byte(answer)) // send answer to conn with 'D' header
 			continue LOOP
 
 		case 'P': // POST - conn tries to declare it's postQuery.Function on server
-			log.Println(name, "- [OK]: POST request")
-			if login == "" { //check login
-				log.Println(name, "- [ERR]: unlogged POST request")
-				conn.Write([]byte("EYou should login first!\r\n"))
-				break LOOP
-			}
-
-			u := &postQuery{}
-			err = json.Unmarshal(buf, u)
+			err := s.handlePost(conn, name, login, buf)
 			if err != nil {
-				log.Println(name, "- [ERR]: can't unmarshal buf")
-				conn.Write([]byte("ECan't unmarshal buf!\r\n"))
-				continue LOOP
-			}
-
-			mu.Lock()
-			if _, ok := funcMap[u.Function]; ok { // if func with this name is already in a map
-				log.Println(name, "- [ERR]: function with name", u.Function, "is already exists in map!")
-				conn.Write([]byte("EFunction with this name is already exists!\r\n"))
-				mu.Unlock()
 				break LOOP
 			}
-			funcMap[u.Function] = login
-			mu.Unlock()
-			log.Printf("%s - [OK]: added to map:\n%v\n", name, funcMap)
-			conn.Write([]byte("OFunction was registered\r\n"))
 
 		case 'R': // READY - conn is now ready to execute others CALC requests
 			log.Println(name, "- [OK]: READY request")
@@ -371,17 +400,17 @@ func main() {
 	log.SetOutput(mw)
 	log.Println("Starting server...")
 
-	muMap := &sync.Mutex{}   // locks all r/w operations with funcMap // TODO: RWMutex?
-	muChans := &sync.Mutex{} // locks all r/w operations with activeUsers
 	listner, err := net.Listen("tcp", ":8080")
 	if err != nil {
 		panic(err)
 	}
+
+	server := NewServer()
 	for {
 		conn, err := listner.Accept()
 		if err != nil {
 			panic(err)
 		}
-		go handleConnection(conn, muMap, muChans)
+		go server.handleConnection(conn)
 	}
 }
