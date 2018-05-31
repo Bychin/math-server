@@ -47,13 +47,17 @@ import (
 //             Ex.: 'S{"rec":"sender","msg":"Hi!"}\n' - server will send message "Hi!" to every user
 //             in activeUsers map except sender with M type
 
+const (
+	logPath = "./logs/"
+)
+
 type postQuery struct {
 	Function string `json:"func"`
 }
 
 type calcQuery struct {
-	Function string          `json:"func"`
-	Data     json.RawMessage `json:"data"`
+	Function string `json:"func"`
+	Data     []byte `json:"data"`
 }
 
 type logQuery struct {
@@ -132,7 +136,6 @@ func (s *Server) loginOrRegister(login, pass string, reg bool, chans *connChans)
 				return true // succsessful login
 			}
 			return false // wrong password
-
 		}
 	}
 	if reg {
@@ -163,27 +166,25 @@ func (s *Server) closeConn(conn net.Conn, login *string) {
 	log.Println(name, "- [OK]: disconnected")
 }
 
-func (s *Server) handlePost(conn net.Conn, name, login string, buf []byte) error {
+func (s *Server) handlePost(conn net.Conn, login string, buf []byte) error {
+	name := conn.RemoteAddr().String()
 	log.Println(name, "- [OK]: POST request")
 	if login == "" { //check login
-		log.Println(name, "- [ERR]: unlogged POST request")
-		conn.Write([]byte("EYou should login first!\r\n"))
+		s.logError(conn, name, "you should login first!\r\n")
 		return errors.New("unlogged POST request")
 	}
 
 	u := &postQuery{}
 	err := json.Unmarshal(buf, u)
 	if err != nil {
-		log.Println(name, "- [ERR]: can't unmarshal buf")
-		conn.Write([]byte("ECan't unmarshal buf!\r\n"))
+		s.logError(conn, name, "can't unmarshal buf!\r\n")
 		return errors.New("can't unmarshal buf") //continue LOOP
 	}
 
 	s.muMap.Lock()
 	defer s.muMap.Unlock()
 	if _, ok := s.funcMap[u.Function]; ok { // if func with this name is already in a map
-		log.Println(name, "- [ERR]: function with name", u.Function, "is already exists in map!")
-		conn.Write([]byte("EFunction with this name is already exists!\r\n"))
+		s.logError(conn, name, "function with this name is already exists!\r\n")
 		// s.muMap.Unlock()
 		return errors.New("function is already exists in map")
 	}
@@ -192,6 +193,13 @@ func (s *Server) handlePost(conn net.Conn, name, login string, buf []byte) error
 	log.Printf("%s - [OK]: added to map:\n%v\n\t", name, s.funcMap)
 	conn.Write([]byte("OFunction was registered\r\n"))
 	return nil
+}
+
+func (s *Server) logError(conn net.Conn, name, err string) {
+	log.Println(name, "- [ERR]: "+err)
+	conn.SetWriteDeadline(time.Now().Add(time.Second))
+	conn.Write([]byte("E" + err + "\r\n"))
+	// close conn? (now - defer)
 }
 
 func (s *Server) handleConnection(conn net.Conn) {
@@ -213,14 +221,12 @@ LOOP:
 			log.Println(name, "- [EOF]")
 			break
 		} else if err != nil {
-			log.Println(name, "- [ERR]: can't read message type")
-			conn.Write([]byte("ECan't read message type!\r\n"))
+			s.logError(conn, name, "can't read message type")
 			break
 		}
 		buf, err := scanner.ReadBytes('\n') // because of this, please always add '\n' at the end of your message
 		if err != nil {
-			log.Println(name, "- [ERR]: can't read message content")
-			conn.Write([]byte("ECan't read message content!\r\n"))
+			s.logError(conn, name, "can't read message content!\r\n")
 			break
 		}
 		text := filterNewLines(string(buf))
@@ -232,14 +238,12 @@ LOOP:
 			r := &logQuery{}
 			err = json.Unmarshal(buf, r)
 			if err != nil {
-				log.Println(name, "- [ERR]: can't unmarshal buf")
-				conn.Write([]byte("EServer can't unmarshal message content!\r\n"))
+				s.logError(conn, name, "server can't unmarshal message content!\r\n")
 				break LOOP
 			}
 			result := s.loginOrRegister(r.Login, r.Password, true, nil)
 			if !result || r.Login == "" {
-				log.Println(name, "- [ERR]: attempt to register with not unique login")
-				conn.Write([]byte("EThis login has already been taken\r\n"))
+				s.logError(conn, name, "this login has already been taken\r\n")
 				break LOOP
 			} else {
 				log.Println(name, "- [OK]: registered succsessfully")
@@ -253,14 +257,12 @@ LOOP:
 			l := &logQuery{}
 			err = json.Unmarshal(buf, l)
 			if err != nil {
-				log.Println(name, "- [ERR]: can't unmarshal buf")
-				conn.Write([]byte("EServer can't unmarshal message content!\r\n"))
+				s.logError(conn, name, "server can't unmarshal message content!\r\n")
 				break LOOP
 			}
 			result := s.loginOrRegister(l.Login, l.Password, false, chans)
 			if !result {
-				log.Println(name, "- [ERR]: attempt to login in with wrong login/pass")
-				conn.Write([]byte("EWrong login/pass\r\n"))
+				s.logError(conn, name, "wrong login/pass\r\n")
 				break LOOP
 			} else {
 				log.Println(name, "- [OK]: logged in succsessfully")
@@ -272,15 +274,13 @@ LOOP:
 		case 'M': // MESSAGE
 			log.Println(name, "- [OK]: MSG request")
 			if login == "" { //check login
-				log.Println(name, "- [ERR]: unlogged MSG request")
-				conn.Write([]byte("EYou should login first!\r\n"))
+				s.logError(conn, name, "you should login first!\r\n")
 				break LOOP
 			}
 			m := &msgQuery{}
 			err = json.Unmarshal(buf, m)
 			if err != nil {
-				log.Println(name, "- [ERR]: can't unmarshal buf")
-				conn.Write([]byte("EServer can't unmarshal message content!\r\n"))
+				s.logError(conn, name, "server can't unmarshal message content!\r\n")
 				break LOOP
 			}
 			s.muChans.Lock()
@@ -303,8 +303,7 @@ LOOP:
 		case 'S': // STREAM
 			log.Println(name, "- [OK]: STR request")
 			if login == "" { //check login
-				log.Println(name, "- [ERR]: unlogged STR request")
-				conn.Write([]byte("EYou should login first!\r\n"))
+				s.logError(conn, name, "you should login first!\r\n")
 				break LOOP
 			}
 
@@ -323,17 +322,16 @@ LOOP:
 		case 'C': // CALC - conn asks to calculate calcQuery.Function with parameters stored in calcQuery.Data
 			log.Println(name, "- [OK]: CALC request")
 			if login == "" { //check login
-				log.Println(name, "- [ERR]: unlogged CALC request")
-				conn.Write([]byte("EYou should login first!\r\n"))
+				s.logError(conn, name, "you should login first!\r\n")
 				break LOOP
 			}
 			c := &calcQuery{}
 			err = json.Unmarshal(buf, c) // get params
 			if err != nil {
-				log.Println(name, "- [ERR]: can't unmarshal buf")
-				conn.Write([]byte("EServer can't unmarshal message content!\r\n"))
+				s.logError(conn, name, "server can't unmarshal message content!\r\n")
 				break LOOP
 			}
+			log.Println(string(c.Data))
 
 			s.muMap.Lock()
 			handler, ok := s.funcMap[c.Function] // find func
@@ -348,8 +346,8 @@ LOOP:
 			sendChan := s.activeUsers[handler].chans.in
 			s.muMap.Unlock()
 
-			*sendChan <- string(c.Data) + "\n" // send params to func holder
-			answer := <-dataChan               // get answer
+			*sendChan <- /*"C" + */ string(c.Data) + "\n" // send params to func holder
+			answer := <-dataChan                          // get answer
 			s.muChans.Unlock()
 
 			log.Println(name, "- [OK]: operation was done")
@@ -357,16 +355,18 @@ LOOP:
 			continue LOOP
 
 		case 'P': // POST - conn tries to declare it's postQuery.Function on server
-			err := s.handlePost(conn, name, login, buf)
+			err := s.handlePost(conn, login, buf)
 			if err != nil {
+				if err.Error() == "function is already exists in map" {
+					continue LOOP
+				}
 				break LOOP
 			}
 
 		case 'R': // READY - conn is now ready to execute others CALC requests
 			log.Println(name, "- [OK]: READY request")
 			if login == "" { //check login
-				log.Println(name, "- [ERR]: unlogged READY request")
-				conn.Write([]byte("EYou should login first!\r\n"))
+				s.logError(conn, name, "you should login first!\r\n")
 				break LOOP
 			}
 
@@ -375,29 +375,23 @@ LOOP:
 				conn.Write([]byte("C" + data))
 				ans, err := scanner.ReadBytes('\n')
 				if err != nil { // Can be caused by closing READY connection
-					log.Println(name, "- [ERR]: can't read answer content")
-					conn.Write([]byte("ECan't read answer content!\r\n"))
+					s.logError(conn, name, "can't read answer content!\r\n")
 					*chans.chans.out <- "ECan't read answer content!\r\n"
 					break LOOP
 				}
 				*chans.chans.out <- "D" + string(ans) // send ans to out chan
 			}
 		default:
-			log.Println(name, "- [ERR]: wrong message type")
-			conn.Write([]byte("EWrong message type!\r\n"))
+			s.logError(conn, name, "wrong message type!\r\n")
 			break LOOP
 		}
+
 	}
 }
 
 func main() {
-	logFile, err := os.OpenFile("./logs/"+time.Now().String()+".log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-	if err != nil {
-		log.Fatalf("server - [ERR]: Cannot open log file: %v", err)
-	}
+	logFile := setupLogger()
 	defer logFile.Close()
-	mw := io.MultiWriter(os.Stdout, logFile)
-	log.SetOutput(mw)
 	log.Println("Starting server...")
 
 	listner, err := net.Listen("tcp", ":8080")
@@ -413,4 +407,14 @@ func main() {
 		}
 		go server.handleConnection(conn)
 	}
+}
+
+func setupLogger() *os.File {
+	logFile, err := os.OpenFile(logPath+time.Now().String()+".log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		log.Fatalf("server - [ERR]: Cannot open log file: %v\n", err)
+	}
+	mw := io.MultiWriter(os.Stdout, logFile)
+	log.SetOutput(mw)
+	return logFile
 }
