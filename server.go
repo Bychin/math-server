@@ -208,14 +208,18 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 	scanner := bufio.NewReader(conn)
 	dataChan := make(chan string)
+	resultChan := make(chan []byte)
 	chans := &connChans{
 		conn:  conn,
 		chans: &inOutChans{in: &dataChan, out: nil},
 	}
 	var login string
+	ready := false // ???
+	//swg := &sync.WaitGroup{}
 	defer s.closeConn(conn, &login)
 LOOP:
 	for {
+		//swg.Wait()
 		msgType, err := scanner.ReadByte()
 		if err == io.EOF {
 			log.Println(name, "- [EOF]")
@@ -231,6 +235,11 @@ LOOP:
 		}
 		text := filterNewLines(string(buf))
 		log.Printf("%s - type: %s, data: %s\n", name, string(msgType), text)
+
+		if msgType == 'D' {
+			resultChan <- buf
+			continue LOOP
+		}
 
 		switch msgType {
 		case 'U': // SIGN UP
@@ -347,7 +356,9 @@ LOOP:
 			s.muMap.Unlock()
 
 			*sendChan <- /*"C" + */ string(c.Data) + "\n" // send params to func holder
-			answer := <-dataChan                          // get answer
+			// TODO timeout here
+			// select time.After
+			answer := <-dataChan // get answer
 			s.muChans.Unlock()
 
 			log.Println(name, "- [OK]: operation was done")
@@ -370,17 +381,42 @@ LOOP:
 				break LOOP
 			}
 
-			for {
-				data := <-dataChan // get values from chan
-				conn.Write([]byte("C" + data))
-				ans, err := scanner.ReadBytes('\n')
-				if err != nil { // Can be caused by closing READY connection
-					s.logError(conn, name, "can't read answer content!\r\n")
-					*chans.chans.out <- "ECan't read answer content!\r\n"
-					break LOOP
-				}
-				*chans.chans.out <- "D" + string(ans) // send ans to out chan
+			if ready {
+				continue LOOP
 			}
+			ready = true
+
+			/*stopChan := make(chan bool, 1)
+			go func(reader bufio.Reader, ch chan bool) {
+				reader.ReadByte()
+				ch <- true
+			}(*scanner, stopChan)*/
+
+			go func(conn net.Conn, dataChan chan string, scanner bufio.Reader, chans *connChans, wg *sync.WaitGroup) {
+				for {
+					//	select {
+					/*	case*/
+					data := <-dataChan // get values from chan
+					//wg.Add(1)
+					//defer wg.Done()
+					conn.Write([]byte("C" + data))
+					// timeout?
+					ans := <-resultChan
+					/*ans, err := scanner.ReadBytes('\n')
+					if err != nil { // Can be caused by closing READY connection
+						s.logError(conn, conn.RemoteAddr().String(), "can't read answer content!\r\n")
+						*chans.chans.out <- "ECan't read answer content!\r\n"
+						//break LOOP
+						return
+					}*/
+					*chans.chans.out <- "D" + string(ans) // send ans to out chan
+					/*	case <-stopChan:
+						log.Println("Exit")
+						ready = false
+						continue LOOP
+					}*/
+				}
+			}(conn, dataChan, *scanner, chans, nil)
 		default:
 			s.logError(conn, name, "wrong message type!\r\n")
 			break LOOP
@@ -390,8 +426,8 @@ LOOP:
 }
 
 func main() {
-	logFile := setupLogger()
-	defer logFile.Close()
+	//logFile := setupLogger()
+	//defer logFile.Close()
 	log.Println("Starting server...")
 
 	listner, err := net.Listen("tcp", ":8080")

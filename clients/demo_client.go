@@ -7,15 +7,20 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
 )
 
+var (
+	login = os.Args[1]
+	pass  = os.Args[2]
+)
+
 const (
-	login    = "pavel3"
-	pass     = "lol"
-	dataPath = "./data.txt"
+	dataPath   = "./data.txt"
+	binaryPath = "./func"
 )
 
 type MsgQuery struct {
@@ -92,7 +97,7 @@ LOOP:
 	for {
 		select {
 		case m := <-msgChan:
-			fmt.Println("From: ", m.Receiver, "\nContent: ", m.Message)
+			fmt.Println("+\n|From: ", m.Receiver, "\n|Content:\n|\t", m.Message, "\n+")
 			empty = false
 		default:
 			if empty {
@@ -103,37 +108,52 @@ LOOP:
 	}
 }
 
-func DeclareAndReady(conn net.Conn, console bufio.Reader) {
-	fmt.Print("\nEnter func name: ")
-	f, _ := console.ReadString('\n')
-
-	conn.Write([]byte("P{\"func\":\"" + f[:len(f)-1] + "\"}\n"))
+func Declare(conn net.Conn, f string) bool {
+	conn.Write([]byte("P{\"func\":\"" + f + "\"}\n"))
 
 	select {
 	case ok := <-okChan:
 		fmt.Println(ok)
+		return true
 	case err := <-errChan:
 		fmt.Println(err)
-		return
+		return false
 	}
+}
 
+func Ready(conn net.Conn, console bufio.Reader) {
+	fmt.Println("Press any key to exit ready mode...")
+	stopChan := make(chan bool, 1)
+	go func(reader bufio.Reader, ch chan bool) {
+		reader.ReadByte()
+		ch <- true
+	}(console, stopChan)
 	conn.Write([]byte("R\n"))
+LOOP:
 	for {
-		// q to exit
-		data := <-calcChan
-		file, err := os.OpenFile(dataPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
-		if err != nil {
-			panic(err)
-		}
-		_, err = file.Write(data)
-		if err != nil {
-			panic(err)
-		}
-		// execute
-		// check for done file
-		// send answer to conn
+		select {
+		case data := <-calcChan:
+			file, err := os.OpenFile(dataPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
+			if err != nil {
+				panic(err)
+			}
+			_, err = file.Write(data)
+			if err != nil {
+				panic(err)
+			}
 
-		//fmt.Println(string(data))
+			out, err := exec.Command(binaryPath).Output()
+			if err != nil {
+				panic(err)
+			}
+
+			conn.Write([]byte("D"))
+			conn.Write(out)
+			conn.Write([]byte("\n")) // always add \n at the end!
+
+		case <-stopChan:
+			break LOOP
+		}
 	}
 }
 
@@ -178,6 +198,7 @@ func ReadMessages(reader bufio.Reader) {
 				time.Sleep(time.Second)
 				panic("server has closed your conn")
 			}
+			time.Sleep(time.Second)
 			panic(err)
 		}
 		if msgType == 'E' {
@@ -199,15 +220,16 @@ func ReadMessages(reader bufio.Reader) {
 }
 
 var (
-	okChan   = make(chan string, 10)
-	errChan  = make(chan string, 10)
+	okChan   = make(chan string, 1)
+	errChan  = make(chan string, 1)
 	msgChan  = make(chan *MsgQuery, 10)
-	calcChan = make(chan []byte, 10)
-	doneChan = make(chan []byte, 10)
+	calcChan = make(chan []byte, 1)
+	doneChan = make(chan []byte, 1)
 )
 
 func main() {
 	conn, err := net.Dial("tcp", ":8080") //"195.19.32.74:2018")
+	defer conn.Close()
 	if err != nil {
 		panic(err)
 	}
@@ -218,8 +240,10 @@ func main() {
 	// login first if you have already registered
 	Login(login, pass, conn, *reader)
 
+	declared := false
+
 	for {
-		fmt.Print("\n------------\nClient menu:\n1) Send message\n2) Check messages\n3) Stream message\n4) Declare func and execute\n5) Calculate func\n------------\n\nEnter number: ")
+		fmt.Printf("\n------------\nYou've logged as %s\nClient menu:\n1) Send message\n2) Check messages\n3) Stream message\n4) Declare and exec my func\n5) Calculate someone's func\n6) Exit\n------------\n\nEnter number: ", login)
 
 		keyStr, _ := console.ReadString('\n')
 		key, err := strconv.Atoi(keyStr[:len(keyStr)-1])
@@ -235,13 +259,19 @@ func main() {
 		case 3:
 			StreamMessage(login, conn, *console)
 		case 4:
-			// bool declared
-			DeclareAndReady(conn, *console)
+			if !declared {
+				fmt.Print("\nEnter func name: ")
+				f, _ := console.ReadString('\n')
+				declared = Declare(conn, f[:len(f)-1])
+			}
+			Ready(conn, *console)
 		case 5:
 			CalculateFunc(conn, *console)
+		case 6:
+			fmt.Println("Bye!")
+			return
 		default:
 			fmt.Println("No such option!")
 		}
 	}
-	conn.Close()
 }
