@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+const (
+	logPath = "./logs/"
+	address = "8080"
+)
+
 func setupLogger() *os.File {
 	logFile, err := os.OpenFile(logPath+time.Now().String()+".log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
@@ -23,7 +28,7 @@ func main() {
 	defer logFile.Close()
 	log.Println("Starting server...")
 
-	listner, err := net.Listen("tcp", ":8080")
+	listner, err := net.Listen("tcp", address)
 	if err != nil {
 		panic(err)
 	}

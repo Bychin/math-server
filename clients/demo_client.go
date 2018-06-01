@@ -19,7 +19,7 @@ var (
 )
 
 const (
-	host       = ":8080" // "195.19.32.74:2018"
+	address    = ":8080" // "195.19.32.74:2018"
 	dataPath   = "./data.txt"
 	binaryPath = "./func"
 )
@@ -217,7 +217,7 @@ var (
 )
 
 func main() {
-	conn, err := net.Dial("tcp", host)
+	conn, err := net.Dial("tcp", address)
 	defer conn.Close()
 	if err != nil {
 		panic(err)

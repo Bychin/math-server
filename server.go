@@ -48,7 +48,7 @@ import (
 //             in activeUsers map except sender with M type
 
 const (
-	logPath = "./logs/"
+	databasePath = "./database.txt"
 )
 
 type postQuery struct {
@@ -91,7 +91,7 @@ type Server struct {
 
 func NewServer() *Server {
 	return &Server{
-		registeredUsers: "./database.txt",
+		registeredUsers: databasePath,
 		activeUsers:     make(map[string]*user),
 		funcMap:         make(map[string]string),
 		muMap:           &sync.Mutex{},
