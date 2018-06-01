@@ -19,6 +19,7 @@ var (
 )
 
 const (
+	host       = ":8080" // "195.19.32.74:2018"
 	dataPath   = "./data.txt"
 	binaryPath = "./func"
 )
@@ -122,38 +123,26 @@ func Declare(conn net.Conn, f string) bool {
 }
 
 func Ready(conn net.Conn, console bufio.Reader) {
-	fmt.Println("Press any key to exit ready mode...")
-	stopChan := make(chan bool, 1)
-	go func(reader bufio.Reader, ch chan bool) {
-		reader.ReadByte()
-		ch <- true
-	}(console, stopChan)
 	conn.Write([]byte("R\n"))
-LOOP:
 	for {
-		select {
-		case data := <-calcChan:
-			file, err := os.OpenFile(dataPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
-			if err != nil {
-				panic(err)
-			}
-			_, err = file.Write(data)
-			if err != nil {
-				panic(err)
-			}
-
-			out, err := exec.Command(binaryPath).Output()
-			if err != nil {
-				panic(err)
-			}
-
-			conn.Write([]byte("D"))
-			conn.Write(out)
-			conn.Write([]byte("\n")) // always add \n at the end!
-
-		case <-stopChan:
-			break LOOP
+		data := <-calcChan
+		file, err := os.OpenFile(dataPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
+		if err != nil {
+			panic(err)
 		}
+		_, err = file.Write(data)
+		if err != nil {
+			panic(err)
+		}
+
+		out, err := exec.Command(binaryPath).Output()
+		if err != nil {
+			panic(err)
+		}
+
+		conn.Write([]byte("D"))
+		conn.Write(out)
+		conn.Write([]byte("\n")) // always add \n at the end!
 	}
 }
 
@@ -228,7 +217,7 @@ var (
 )
 
 func main() {
-	conn, err := net.Dial("tcp", ":8080") //"195.19.32.74:2018")
+	conn, err := net.Dial("tcp", host)
 	defer conn.Close()
 	if err != nil {
 		panic(err)
@@ -241,6 +230,7 @@ func main() {
 	Login(login, pass, conn, *reader)
 
 	declared := false
+	ready := false
 
 	for {
 		fmt.Printf("\n------------\nYou've logged as %s\nClient menu:\n1) Send message\n2) Check messages\n3) Stream message\n4) Declare and exec my func\n5) Calculate someone's func\n6) Exit\n------------\n\nEnter number: ", login)
@@ -264,7 +254,10 @@ func main() {
 				f, _ := console.ReadString('\n')
 				declared = Declare(conn, f[:len(f)-1])
 			}
-			Ready(conn, *console)
+			if !ready {
+				ready = true
+				go Ready(conn, *console)
+			}
 		case 5:
 			CalculateFunc(conn, *console)
 		case 6:
