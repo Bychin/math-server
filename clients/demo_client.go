@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"os"
 	"os/exec"
@@ -19,9 +20,15 @@ var (
 )
 
 const (
-	address    = ":8080" // "195.19.32.74:2018"
-	dataPath   = "./data.txt"
-	binaryPath = "./func"
+	address = ":8080" //"195.19.32.74:2018"
+
+	binaryFuncPath = "./func"          // ваша математическая функция
+	dataReadyPath  = "./dataReady.txt" // куда записывать входящие аргументы для исполения функции func
+
+	binaryCalcPath = "./calc"         // программа, которая запрашивает необходимые параметры и пакует их в json
+	dataCalcPath   = "./dataCalc.txt" // куда calc будет записывать json-аргумент, чтобы отправить его в поле data в C-запросе
+
+	binaryResultPath = "./result" // программа, которая обрабатывает результат, переданный ей первым аргуметом
 )
 
 type MsgQuery struct {
@@ -92,7 +99,7 @@ func StreamMessage(login string, conn net.Conn, reader bufio.Reader) {
 	}
 }
 
-func ListMessages(reader bufio.Reader) {
+func ListMessages() {
 	empty := true
 LOOP:
 	for {
@@ -122,11 +129,11 @@ func Declare(conn net.Conn, f string) bool {
 	}
 }
 
-func Ready(conn net.Conn, console bufio.Reader) {
+func Ready(conn net.Conn) {
 	conn.Write([]byte("R\n"))
 	for {
 		data := <-calcChan
-		file, err := os.OpenFile(dataPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
+		file, err := os.OpenFile(dataReadyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
 		if err != nil {
 			panic(err)
 		}
@@ -135,7 +142,7 @@ func Ready(conn net.Conn, console bufio.Reader) {
 			panic(err)
 		}
 
-		out, err := exec.Command(binaryPath).Output()
+		out, err := exec.Command(binaryFuncPath).Output()
 		if err != nil {
 			panic(err)
 		}
@@ -150,17 +157,29 @@ func CalculateFunc(conn net.Conn, console bufio.Reader) {
 	fmt.Print("\nEnter func name: ")
 	f, _ := console.ReadString('\n')
 
-	// hardcode here, only for example
-	fmt.Print("\nEnter vector components: ")
-	comp, _ := console.ReadString('\n')
-	fmt.Print("\nEnter scalar: ")
-	sc, _ := console.ReadString('\n')
+	file, err := os.Create(dataCalcPath)
+	if err != nil {
+		panic(err)
+	}
+	file.Close()
+	cmd := exec.Command(binaryCalcPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stdin = os.Stdin
+	err = cmd.Run()
+	if err != nil {
+		panic(err)
+	}
+	file, err = os.OpenFile(dataCalcPath, os.O_RDONLY, 0666)
+	out, err := ioutil.ReadAll(file)
+	if err != nil {
+		panic(err)
+	}
+	file.Close()
 
 	c := &calcQuery{
 		Function: f[:len(f)-1],
-		Data:     []byte("{\"vector\":[" + comp[:len(comp)-1] + "],\"scalar\":" + sc[:len(sc)-1] + "}"),
+		Data:     out,
 	}
-	// end of hardcode
 
 	byt, err := json.Marshal(c)
 	if err != nil {
@@ -172,7 +191,12 @@ func CalculateFunc(conn net.Conn, console bufio.Reader) {
 
 	select {
 	case ok := <-doneChan:
-		fmt.Println(string(ok)) // TODO
+		cmd := exec.Command(binaryResultPath, string(ok))
+		cmd.Stdout = os.Stdout
+		err := cmd.Run()
+		if err != nil {
+			panic(err)
+		}
 	case err := <-errChan:
 		fmt.Println(err)
 	}
@@ -245,7 +269,7 @@ func main() {
 		case 1:
 			SendMessage(conn, *console)
 		case 2:
-			ListMessages(*reader)
+			ListMessages()
 		case 3:
 			StreamMessage(login, conn, *console)
 		case 4:
@@ -256,7 +280,7 @@ func main() {
 			}
 			if !ready {
 				ready = true
-				go Ready(conn, *console)
+				go Ready(conn)
 			}
 		case 5:
 			CalculateFunc(conn, *console)

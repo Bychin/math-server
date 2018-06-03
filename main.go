@@ -10,7 +10,7 @@ import (
 
 const (
 	logPath = "./logs/"
-	address = "8080"
+	address = ":8080"
 )
 
 func setupLogger() *os.File {
