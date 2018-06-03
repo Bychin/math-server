@@ -6,9 +6,11 @@
 
 using json = nlohmann::json;
 
-const std::string dataReadyPath = "./dataReady.txt";
+//const std::string dataReadyPath = "./dataReady.txt";
 
-int main() {
+int main(int argc, char **argv) {
+    const std::string dataReadyPath = argv[1];
+
     json j;
     std::ifstream myfile(dataReadyPath);
     if (myfile.is_open()) {

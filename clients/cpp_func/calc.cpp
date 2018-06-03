@@ -6,7 +6,7 @@
 
 using json = nlohmann::json;
 
-const std::string dataCalcPath = "./dataCalc.txt";
+//const std::string dataCalcPath = "./dataCalc.txt";
 
 // splits string in vector ("1,2,3" -> {1, 2, 3})
 std::vector<int> splitToInt(std::string target, char delim) {
@@ -20,7 +20,7 @@ std::vector<int> splitToInt(std::string target, char delim) {
     return v;
 }
 
-int main() {
+int main(int argc, char **argv) {
     std::cout << "Enter vector components:\n";
     std::string line;
     getline(std::cin, line);
@@ -33,7 +33,7 @@ int main() {
     j["vector"] = splitToInt(line, ',');
     j["scalar"] = scalar;
 
-
+    const std::string dataCalcPath = argv[1];
     std::ofstream myfile(dataCalcPath);
     if (myfile.is_open()) {
         myfile << j;

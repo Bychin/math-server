@@ -142,7 +142,7 @@ func Ready(conn net.Conn) {
 			panic(err)
 		}
 
-		out, err := exec.Command(binaryFuncPath).Output()
+		out, err := exec.Command(binaryFuncPath, dataReadyPath).Output()
 		if err != nil {
 			panic(err)
 		}
@@ -162,7 +162,7 @@ func CalculateFunc(conn net.Conn, console bufio.Reader) {
 		panic(err)
 	}
 	file.Close()
-	cmd := exec.Command(binaryCalcPath)
+	cmd := exec.Command(binaryCalcPath, dataCalcPath)
 	cmd.Stdout = os.Stdout
 	cmd.Stdin = os.Stdin
 	err = cmd.Run()
