@@ -131,6 +131,9 @@ func (s *Server) loginOrRegister(login, pass string, reg bool, u *user) bool /*,
 			}
 			if logPass[1] == pass+"\n" {
 				s.muChans.Lock()
+				if _, ok := s.activeUsers[login]; ok { // user has already logged in
+					return false
+				}
 				s.activeUsers[login] = u // add to active users
 				s.muChans.Unlock()
 				return true // succsessful login
@@ -249,7 +252,7 @@ func (s *Server) signInUser(name string, buf []byte, u *user, conn net.Conn) (st
 	}
 	result := s.loginOrRegister(l.Login, l.Password, false, u)
 	if !result {
-		s.logError(conn, name, "wrong login/pass\r\n")
+		s.logError(conn, name, "wrong login/pass or user is online already\r\n")
 		return "", err
 	}
 

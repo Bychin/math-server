@@ -19,7 +19,7 @@ var (
 )
 
 const (
-	address = ":8080" //"195.19.32.74:2018"
+	address = "195.19.32.74:2018"
 
 	binaryFuncPath = "./func"          // your math function
 	dataReadyPath  = "./dataReady.txt" // file where income args for your func execution will be stored
@@ -53,10 +53,9 @@ func Login(name, pass string, conn net.Conn) {
 func SendMessage(conn net.Conn) {
 	fmt.Print("\nEnter receiver: ")
 	var res, msg string
-	_, err := fmt.Scanf("%s", &res)
+	_, err := fmt.Scan(&res)
 	fmt.Print("Enter message: ")
-	_, err = fmt.Scanf("%s", &msg)
-	fmt.Println(res, msg)
+	_, err = fmt.Scan(&msg)
 	if err != nil {
 		panic(err)
 	}
@@ -83,7 +82,7 @@ func SendMessage(conn net.Conn) {
 func StreamMessage(login string, conn net.Conn) {
 	fmt.Print("\nEnter message: ")
 	var msg string
-	_, err := fmt.Scanf("%s", &msg)
+	_, err := fmt.Scan(&msg)
 	if err != nil {
 		panic(err)
 	}
@@ -164,7 +163,7 @@ func Ready(conn net.Conn) {
 func CalculateFunc(conn net.Conn) {
 	fmt.Print("\nEnter func name: ")
 	var f string
-	_, err := fmt.Scanf("%s", &f)
+	_, err := fmt.Scan(&f)
 	fmt.Println("enter:", f)
 
 	file, err := os.Create(dataCalcPath)
@@ -268,7 +267,7 @@ func main() {
 	for {
 		fmt.Printf("\n------------\nYou've logged as %s\nClient menu:\n1) Send message\n2) Check messages\n3) Stream message\n4) Declare and exec my func\n5) Calculate someone's func\n6) Exit\n------------\n\nEnter number: ", login)
 		key := 0
-		_, err := fmt.Scanf("%d", &key)
+		_, err := fmt.Scan(&key)
 		if err != nil {
 			continue
 		}
@@ -284,7 +283,7 @@ func main() {
 			if !declared {
 				fmt.Print("\nEnter func name: ")
 				f := "unnamed"
-				_, err := fmt.Scanf("%s", &f)
+				_, err := fmt.Scan(&f)
 				if err != nil {
 					panic(err)
 				}
