@@ -9,7 +9,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -22,13 +21,13 @@ var (
 const (
 	address = ":8080" //"195.19.32.74:2018"
 
-	binaryFuncPath = "./func"          // ваша математическая функция
-	dataReadyPath  = "./dataReady.txt" // куда записывать входящие аргументы для исполения функции func
+	binaryFuncPath = "./func"          // your math function
+	dataReadyPath  = "./dataReady.txt" // file where income args for your func execution will be stored
 
-	binaryCalcPath = "./calc"         // программа, которая запрашивает необходимые параметры и пакует их в json
-	dataCalcPath   = "./dataCalc.txt" // куда calc будет записывать json-аргумент, чтобы отправить его в поле data в C-запросе
+	binaryCalcPath = "./calc"         // program which asks params for your func and stores them in a single json
+	dataCalcPath   = "./dataCalc.txt" // file where calc will store json-argument (for filed "data" in C request)
 
-	binaryResultPath = "./result" // программа, которая обрабатывает результат, переданный ей первым аргуметом
+	binaryResultPath = "./result" // prigram which outputs result (json-answer is passed as first parameter)
 )
 
 type MsgQuery struct {
@@ -41,7 +40,7 @@ type calcQuery struct {
 	Data     []byte `json:"data"`
 }
 
-func Login(name, pass string, conn net.Conn, reader bufio.Reader) {
+func Login(name, pass string, conn net.Conn) {
 	conn.Write([]byte("I{\"login\":\"" + name + "\",\"pass\":\"" + pass + "\"}\n"))
 	select {
 	case ok := <-okChan:
@@ -51,11 +50,16 @@ func Login(name, pass string, conn net.Conn, reader bufio.Reader) {
 	}
 }
 
-func SendMessage(conn net.Conn, reader bufio.Reader) {
+func SendMessage(conn net.Conn) {
 	fmt.Print("\nEnter receiver: ")
-	res, _ := reader.ReadString('\n')
+	var res, msg string
+	_, err := fmt.Scanf("%s", &res)
 	fmt.Print("Enter message: ")
-	msg, _ := reader.ReadString('\n')
+	_, err = fmt.Scanf("%s", &msg)
+	fmt.Println(res, msg)
+	if err != nil {
+		panic(err)
+	}
 	m := &MsgQuery{
 		Receiver: strings.TrimSpace(res),
 		Message:  strings.TrimSpace(msg),
@@ -76,9 +80,13 @@ func SendMessage(conn net.Conn, reader bufio.Reader) {
 	}
 }
 
-func StreamMessage(login string, conn net.Conn, reader bufio.Reader) {
+func StreamMessage(login string, conn net.Conn) {
 	fmt.Print("\nEnter message: ")
-	msg, _ := reader.ReadString('\n')
+	var msg string
+	_, err := fmt.Scanf("%s", &msg)
+	if err != nil {
+		panic(err)
+	}
 	m := &MsgQuery{
 		Receiver: login, // sender here
 		Message:  strings.TrimSpace(msg),
@@ -153,9 +161,11 @@ func Ready(conn net.Conn) {
 	}
 }
 
-func CalculateFunc(conn net.Conn, console bufio.Reader) {
+func CalculateFunc(conn net.Conn) {
 	fmt.Print("\nEnter func name: ")
-	f, _ := console.ReadString('\n')
+	var f string
+	_, err := fmt.Scanf("%s", &f)
+	fmt.Println("enter:", f)
 
 	file, err := os.Create(dataCalcPath)
 	if err != nil {
@@ -177,7 +187,7 @@ func CalculateFunc(conn net.Conn, console bufio.Reader) {
 	file.Close()
 
 	c := &calcQuery{
-		Function: f[:len(f)-1],
+		Function: f,
 		Data:     out,
 	}
 
@@ -247,43 +257,46 @@ func main() {
 		panic(err)
 	}
 	reader := bufio.NewReader(conn)
-	console := bufio.NewReader(os.Stdin)
 	go ReadMessages(*reader)
 
 	// login first if you have already registered
-	Login(login, pass, conn, *reader)
+	Login(login, pass, conn)
 
 	declared := false
 	ready := false
 
 	for {
 		fmt.Printf("\n------------\nYou've logged as %s\nClient menu:\n1) Send message\n2) Check messages\n3) Stream message\n4) Declare and exec my func\n5) Calculate someone's func\n6) Exit\n------------\n\nEnter number: ", login)
-
-		keyStr, _ := console.ReadString('\n')
-		key, err := strconv.Atoi(keyStr[:len(keyStr)-1])
+		key := 0
+		_, err := fmt.Scanf("%d", &key)
 		if err != nil {
 			continue
 		}
 
 		switch key {
 		case 1:
-			SendMessage(conn, *console)
+			SendMessage(conn)
 		case 2:
 			ListMessages()
 		case 3:
-			StreamMessage(login, conn, *console)
+			StreamMessage(login, conn)
 		case 4:
 			if !declared {
 				fmt.Print("\nEnter func name: ")
-				f, _ := console.ReadString('\n')
-				declared = Declare(conn, f[:len(f)-1])
+				f := "unnamed"
+				_, err := fmt.Scanf("%s", &f)
+				if err != nil {
+					panic(err)
+				}
+				fmt.Println(f)
+				declared = Declare(conn, f)
 			}
 			if !ready {
 				ready = true
 				go Ready(conn)
 			}
 		case 5:
-			CalculateFunc(conn, *console)
+			CalculateFunc(conn)
 		case 6:
 			fmt.Println("Bye!")
 			return
