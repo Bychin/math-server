@@ -2,15 +2,18 @@ package main
 
 import (
 	"bufio"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
 	"log"
 	"net"
-	"os"
+	//	"os"
 	"strings"
 	"sync"
 	"time"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // This is a simple TCP server with it's own communication protocol over TCP
@@ -48,7 +51,12 @@ import (
 //             in activeUsers map except sender with M type
 
 const (
-	databasePath = "./database.txt"
+	DSN       = "file:./database/data.db"
+	TableName = "users"
+)
+
+var (
+	TableCols = []string{"login", "pass"}
 )
 
 type postQuery struct {
@@ -81,21 +89,31 @@ type user struct {
 }
 
 type Server struct {
-	registeredUsers string            // TODO: redis
-	activeUsers     map[string]*user  // login -> it's conn chans and conn itself
-	funcMap         map[string]string // func -> login that can handle it
+	db *sql.DB // registeredUsers database
+
+	activeUsers map[string]*user  // login -> it's conn chans and conn itself
+	funcMap     map[string]string // func -> login that can handle it
 
 	muMap   *sync.Mutex // locks all r/w operations with funcMap // TODO: RWMutex?
 	muChans *sync.Mutex // locks all r/w operations with activeUsers
 }
 
 func NewServer() *Server {
+	db, err := sql.Open("sqlite3", DSN)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	err = db.Ping()
+	if err != nil {
+		log.Fatalln(err)
+	}
+
 	return &Server{
-		registeredUsers: databasePath,
-		activeUsers:     make(map[string]*user),
-		funcMap:         make(map[string]string),
-		muMap:           &sync.Mutex{},
-		muChans:         &sync.Mutex{},
+		db:          db, // registeredUsers database
+		activeUsers: make(map[string]*user),
+		funcMap:     make(map[string]string),
+		muMap:       &sync.Mutex{},
+		muChans:     &sync.Mutex{},
 	}
 }
 
@@ -113,42 +131,39 @@ func filterNewLines(s string) string {
 
 // Logins or registers user with login and pass
 func (s *Server) loginOrRegister(login, pass string, reg bool, u *user) bool /*, error*/ {
-	file, err := os.OpenFile(s.registeredUsers, os.O_RDWR, 0644)
-	defer file.Close()
+	l := &logQuery{}
+	err := s.db.QueryRow("SELECT * FROM "+TableName+" WHERE "+TableCols[0]+"=?", login).Scan(&l.Login, &l.Password)
+
 	if err != nil {
-		panic(err)
-	}
-	fileReader := bufio.NewReader(file)
-	for {
-		content, err := fileReader.ReadString('\n')
-		if err != nil { // os.EOF
-			break
-		}
-		logPass := strings.Split(content, "---")
-		if logPass[0] == login { // if this login was taken
-			if reg {
-				return false // login isn't unique
+		if err == sql.ErrNoRows {
+			if !reg { // can't find such user
+				return false
 			}
-			if logPass[1] == pass+"\n" {
-				s.muChans.Lock()
-				if _, ok := s.activeUsers[login]; ok { // user has already logged in
-					return false
-				}
-				s.activeUsers[login] = u // add to active users
-				s.muChans.Unlock()
-				return true // succsessful login
+			// register new user
+			statement := "INSERT INTO " + TableName + " (" + strings.Join(TableCols, ",") + ") VALUES (" + strings.Join(strings.Split(strings.Repeat("?", len(TableCols)), ""), ",") + ")"
+			_, err := s.db.Exec(statement, login, pass)
+			if err != nil {
+				log.Fatalln(err)
 			}
-			return false // wrong password
+			return true
 		}
+		log.Fatalln(err)
 	}
+
 	if reg {
-		_, err := file.WriteString(login + "---" + pass + "\n") // add to db
-		if err != nil {
-			panic(err)
-		}
-		return true // login is unique
+		return false // user already exists
 	}
-	return false // wrong login
+	if l.Password == pass {
+		s.muChans.Lock()
+		if _, ok := s.activeUsers[login]; ok { // user has already logged in
+			s.muChans.Unlock()
+			return false
+		}
+		s.activeUsers[login] = u // add to active users
+		s.muChans.Unlock()
+		return true // succsessful login
+	}
+	return false // wrong password
 }
 
 // Closes conn and deletes func from funcMap if exists

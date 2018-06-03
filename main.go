@@ -10,7 +10,7 @@ import (
 
 const (
 	logPath = "./logs/"
-	address = ":8080"
+	address = ":8008"
 )
 
 func setupLogger() *os.File {
@@ -34,6 +34,7 @@ func main() {
 	}
 
 	server := NewServer()
+	defer server.db.Close()
 	for {
 		conn, err := listner.Accept()
 		if err != nil {

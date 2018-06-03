@@ -19,15 +19,15 @@ var (
 )
 
 const (
-	address = "195.19.32.74:2018"
+	address = ":8080" //"195.19.32.74:2018"
 
-	binaryFuncPath = "./func"          // your math function
-	dataReadyPath  = "./dataReady.txt" // file where income args for your func execution will be stored
+	binaryFuncPath = `./func`          // your math function
+	dataReadyPath  = `./dataReady.txt` // file where income args for your func execution will be stored
 
-	binaryCalcPath = "./calc"         // program which asks params for your func and stores them in a single json
-	dataCalcPath   = "./dataCalc.txt" // file where calc will store json-argument (for filed "data" in C request)
+	binaryCalcPath = `./calc`         // program which asks params for your func and stores them in a single json
+	dataCalcPath   = `./dataCalc.txt` // file where calc will store json-argument (for filed "data" in C request)
 
-	binaryResultPath = "./result" // prigram which outputs result (json-answer is passed as first parameter)
+	binaryResultPath = `./result` // prigram which outputs result (json-answer is passed as first parameter)
 )
 
 type MsgQuery struct {
